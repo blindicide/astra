@@ -88,22 +88,40 @@ void sync_dir(const fs::path& path) {
     if (fd < 0 || fsync(fd) != 0) { if (fd >= 0) close(fd); throw std::runtime_error("cannot synchronize journal directory"); }
     close(fd);
 }
+std::string nonce();
+void fault(const char* boundary);
+bool path_exists(const fs::path& path) {
+    struct stat st{};
+    if (lstat(path.c_str(), &st) == 0) return true;
+    if (errno == ENOENT) return false;
+    throw std::runtime_error("cannot inspect transaction journal");
+}
 void durable_file(const fs::path& path, const std::string& value) {
     fs::path temp = path;
-    temp += ".tmp";
+    temp += ".tmp." + nonce();
     int fd = open(temp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (fd < 0) throw std::runtime_error("cannot create transaction journal");
-    size_t offset = 0;
-    while (offset < value.size()) {
-        ssize_t n = write(fd, value.data() + offset, value.size() - offset);
-        if (n < 0 && errno == EINTR) continue;
-        if (n <= 0) { close(fd); throw std::runtime_error("cannot write transaction journal"); }
-        offset += static_cast<size_t>(n);
+    try {
+        size_t offset = 0;
+        while (offset < value.size()) {
+            ssize_t n = write(fd, value.data() + offset, value.size() - offset);
+            if (n < 0 && errno == EINTR) continue;
+            if (n <= 0) throw std::runtime_error("cannot write transaction journal");
+            offset += static_cast<size_t>(n);
+        }
+        if (fsync(fd) != 0) throw std::runtime_error("cannot synchronize transaction journal");
+        if (close(fd) != 0) { fd = -1; throw std::runtime_error("cannot close transaction journal"); }
+        fd = -1;
+        fault("before_journal_publish");
+        if (link(temp.c_str(), path.c_str()) != 0) throw std::runtime_error("cannot publish transaction journal");
+        fault("after_journal_publish");
+        if (unlink(temp.c_str()) != 0) throw std::runtime_error("cannot remove temporary transaction journal");
+        sync_dir(path.parent_path());
+    } catch (...) {
+        if (fd >= 0) close(fd);
+        unlink(temp.c_str());
+        throw;
     }
-    if (fsync(fd) != 0) { close(fd); throw std::runtime_error("cannot synchronize transaction journal"); }
-    close(fd);
-    if (rename(temp.c_str(), path.c_str()) != 0) throw std::runtime_error("cannot publish transaction journal");
-    sync_dir(path.parent_path());
 }
 std::string hex(const unsigned char* bytes, size_t count) {
     static constexpr char digits[] = "0123456789abcdef";
@@ -243,11 +261,23 @@ long long package_id(sqlite3* db, const PackageRecord& p) {
     return q.number(0);
 }
 std::string read_journal(const fs::path& path) {
+    int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0) throw std::runtime_error("transaction journal is missing or unsafe");
     struct stat st{};
-    if (lstat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode) || st.st_uid != geteuid() || (st.st_mode & 0077) || st.st_size > 1024 * 1024)
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_uid != geteuid() || (st.st_mode & 0077) || st.st_size < 0 || st.st_size > 1024 * 1024) {
+        close(fd);
         throw std::runtime_error("transaction journal is missing or unsafe");
-    std::ifstream input(path, std::ios::binary);
-    return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+    }
+    std::string value(static_cast<size_t>(st.st_size), '\0');
+    size_t offset = 0;
+    while (offset < value.size()) {
+        ssize_t count = read(fd, value.data() + offset, value.size() - offset);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) { close(fd); throw std::runtime_error("cannot read transaction journal"); }
+        offset += static_cast<size_t>(count);
+    }
+    if (close(fd) != 0) throw std::runtime_error("cannot close transaction journal");
+    return value;
 }
 }
 
@@ -278,7 +308,7 @@ void TransactionEngine::recover_locked() {
         fs::path journal = directory_ / "journals" / (hash + ".json");
         if (hash_of(intent) != hash)
             throw std::runtime_error("transaction intent or journal is corrupt; operator intervention required");
-        if (fs::exists(journal)) {
+        if (path_exists(journal)) {
             if (read_journal(journal) != intent)
                 throw std::runtime_error("transaction journal differs from immutable intent; operator intervention required");
         } else if (active != target) durable_file(journal, intent);
@@ -362,7 +392,7 @@ void TransactionEngine::recover_locked() {
             if (!empty_seed) throw std::runtime_error("transaction selection count differs from generation; operator intervention required");
         }
         fs::path journal = directory_ / "journals" / (hash + ".json");
-        if (fs::exists(journal) && read_journal(journal) != intent)
+        if (path_exists(journal) && read_journal(journal) != intent)
             throw std::runtime_error("transaction journal mismatch; operator intervention required");
         Query events(db, "SELECT event FROM transaction_events WHERE transaction_sequence=? ORDER BY id;");
         events.bind(1, audit.number(5));
@@ -375,7 +405,7 @@ void TransactionEngine::recover_locked() {
         if (!prepared_event || !outcome_event)
             throw std::runtime_error("transaction outcome events are incomplete; operator intervention required");
         if (status == "committed") {
-            if (!fs::exists(journal)) throw std::runtime_error("committed transaction has no journal; operator intervention required");
+            if (!path_exists(journal)) throw std::runtime_error("committed transaction has no journal; operator intervention required");
             if (audit.text(4) != (directory_ / "roots" / hash).string() || store_target(audit.text(4)) != audit.text(3))
                 throw std::runtime_error("retained generation GC root is missing; operator intervention required");
             verify_store(audit.text(3));

@@ -83,6 +83,12 @@ grep -F 'Profile reconciled and audited' "$TEST_DIR/repair.out"
 test "$(sqlite3 "$XDG_STATE_HOME/astra/state.db" "SELECT count(*) FROM transaction_events WHERE event='root_restored';")" -eq 1
 journal_to_test="$XDG_STATE_HOME/astra/profiles/default/journals/$(sqlite3 "$XDG_STATE_HOME/astra/state.db" "SELECT hash FROM transactions ORDER BY sequence LIMIT 1;").json"
 original_journal=$(cat "$journal_to_test")
+mv "$journal_to_test" "$TEST_DIR/safe-journal"
+ln -s "$TEST_DIR/safe-journal" "$journal_to_test"
+"$ASTRA_BIN" history > "$TEST_DIR/symlink-journal.out" 2>&1 && exit 1
+grep -F 'transaction journal is missing or unsafe' "$TEST_DIR/symlink-journal.out"
+unlink "$journal_to_test"
+mv "$TEST_DIR/safe-journal" "$journal_to_test"
 unlink "$root_to_repair"
 printf '%s' '{"tampered":true}' > "$journal_to_test"
 "$ASTRA_BIN" --yes repair > "$TEST_DIR/repair-tampered.out" 2>&1 && exit 1

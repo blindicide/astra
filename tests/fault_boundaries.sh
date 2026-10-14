@@ -10,7 +10,7 @@ ln -s nix "$TEST_DIR/bin/nix-store"
 ln -s nix "$TEST_DIR/bin/nix-env"
 export PATH="$TEST_DIR/bin:$PATH"
 export ASTRA_FIXTURE_DIR=$(realpath tests/fixtures)
-for point in after_build after_staging after_root before_prepared_db after_prepared_db before_journal after_journal before_activation after_activation after_verification before_commit after_commit; do
+for point in after_build after_staging after_root before_prepared_db after_prepared_db before_journal before_journal_publish after_journal_publish after_journal before_activation after_activation after_verification before_commit after_commit; do
     export XDG_STATE_HOME="$TEST_DIR/$point"
     "$ASTRA_BIN" repo update >/dev/null
     "$ASTRA_BIN" --yes install hello >/dev/null
@@ -19,6 +19,16 @@ for point in after_build after_staging after_root before_prepared_db after_prepa
     status=$?
     set -e
     test "$status" -eq 77
+    if [ "$point" = before_journal_publish ] || [ "$point" = after_journal_publish ]; then
+        test "$(find "$XDG_STATE_HOME/astra/profiles/default/journals" -name '*.tmp.*' | wc -l)" -eq 1
+        pending_hash=$(sqlite3 "$XDG_STATE_HOME/astra/state.db" "SELECT hash FROM transactions WHERE status='prepared';")
+        test -n "$pending_hash"
+        if [ "$point" = before_journal_publish ]; then
+            test ! -e "$XDG_STATE_HOME/astra/profiles/default/journals/$pending_hash.json"
+        else
+            test -f "$XDG_STATE_HOME/astra/profiles/default/journals/$pending_hash.json"
+        fi
+    fi
     "$ASTRA_BIN" history > "$TEST_DIR/$point.history"
     actual=$(readlink "$XDG_STATE_HOME/astra/profiles/default/profile")
     recorded=$(sqlite3 "$XDG_STATE_HOME/astra/state.db" "SELECT store_path FROM generations WHERE active=1 AND profile_id=(SELECT id FROM profiles WHERE name='default');")
