@@ -1,0 +1,26 @@
+name: check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build and archive dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libjson-c-dev libssl-dev sqlite3 zstd
+      - name: Build and test
+        run: |
+          make -j2
+          make check
+      - name: Package and test source candidate
+        run: |
+          mkdir -p "$RUNNER_TEMP/astra-artifacts"
+          sh scripts/package-source-candidate.sh "$RUNNER_TEMP/astra-artifacts"
+          cd "$RUNNER_TEMP/astra-artifacts"
+          sha256sum -c astra-0.3.0-dev.tar.zst.sha256
+          sh "$GITHUB_WORKSPACE/scripts/check-source-archive.sh" astra-0.3.0-dev.tar.zst
