@@ -14,6 +14,7 @@
 #include <memory>
 #include <openssl/sha.h>
 #include <regex>
+#include <set>
 #include <sqlite3.h>
 #include <stdexcept>
 #include <sys/file.h>
@@ -639,5 +640,49 @@ std::string TransactionEngine::why(const std::string& identifier) const {
     }
     if (!found) throw std::runtime_error("no matching package or store path is in this ASTRA profile's recorded closure");
     return result;
+}
+std::string TransactionEngine::clean(bool yes, bool dry_run) {
+    Lock lock(directory_ / "operation.lock");
+    recover_locked();
+    std::vector<fs::path> candidates;
+    for (const auto& entry : fs::directory_iterator(directory_ / "staged")) {
+        std::string name = entry.path().filename().string();
+        if (std::regex_match(name, std::regex("[0-9a-f]{32}")) && entry.is_symlink())
+            candidates.push_back(entry.path());
+    }
+    for (const auto& entry : fs::directory_iterator(directory_ / "roots")) {
+        std::string name = entry.path().filename().string();
+        if (!std::regex_match(name, std::regex("[0-9a-f]{64}")) || !entry.is_symlink()) continue;
+        Query reference(db_.handle(), "SELECT count(*) FROM store_references WHERE root_path=?;");
+        reference.bind(1, entry.path().string()); reference.next();
+        if (reference.number(0) == 0) candidates.push_back(entry.path());
+    }
+    std::sort(candidates.begin(), candidates.end());
+    std::string report = "Retention policy: keep every recorded generation and GC root.\n";
+    report += "Eligible abandoned ASTRA links: " + std::to_string(candidates.size()) + "\n";
+    for (const auto& path : candidates) report += "  " + path.string() + "\n";
+    if (dry_run || candidates.empty()) return report + "No links removed.\n";
+    if (!yes) {
+        if (!isatty(STDIN_FILENO)) throw std::runtime_error("cleanup confirmation required; pass --yes after reviewing --dry-run");
+        std::cout << report << "Remove these links? [y/N] " << std::flush;
+        std::string response;
+        std::getline(std::cin, response);
+        if (response != "y" && response != "Y") throw std::runtime_error("cleanup cancelled");
+    }
+    std::set<fs::path> changed_directories;
+    for (const auto& path : candidates) {
+        struct stat st{};
+        if (lstat(path.c_str(), &st) != 0 || !S_ISLNK(st.st_mode))
+            throw std::runtime_error("cleanup candidate changed; retry after inspection");
+        if (path.parent_path() == directory_ / "roots") {
+            Query reference(db_.handle(), "SELECT count(*) FROM store_references WHERE root_path=?;");
+            reference.bind(1, path.string()); reference.next();
+            if (reference.number(0) != 0) throw std::runtime_error("cleanup root became referenced; retry");
+        }
+        if (unlink(path.c_str()) != 0) throw std::runtime_error("cannot remove abandoned ASTRA link");
+        changed_directories.insert(path.parent_path());
+    }
+    for (const auto& path : changed_directories) sync_dir(path);
+    return report + "Removed " + std::to_string(candidates.size()) + " abandoned ASTRA links.\n";
 }
 }

@@ -24,6 +24,7 @@ public:
     std::string history() const;
     std::string history_show(const std::string& identifier, bool json) const;
     std::string why(const std::string& identifier) const;
+    std::string clean(bool yes, bool dry_run);
 private:
     void recover_locked();
     Database& db_;

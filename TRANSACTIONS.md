@@ -6,7 +6,7 @@
 
 ASTRA locks one named profile, reconciles prior prepared work, and resolves package selections against pinned repository revisions. It shows the proposed package count and a Nix build preview, then requires confirmation unless `--yes` was supplied. Nix builds or substitutes missing package outputs. ASTRA asks Nix to construct a complete staged profile, verifies its store path, and registers a separate Nix GC root for the target. A single `nix-env --profile ... --set <target-store-path>` call activates the new managed profile generation. ASTRA verifies the active store reference before marking the transaction committed. The actual Nix behavior has not been validated on this development host.
 
-The profile lives below `$XDG_STATE_HOME/astra/profiles/NAME/profile` or `$HOME/.local/state/astra/profiles/NAME/profile`. Each retained committed generation has a root below `roots/`; do not move these root paths because Nix records their locations. Staged profiles and roots created before a failed preparation may remain until a future explicit cleanup implementation; ASTRA does not silently delete them.
+The profile lives below `$XDG_STATE_HOME/astra/profiles/NAME/profile` or `$HOME/.local/state/astra/profiles/NAME/profile`. Each retained committed generation has a root below `roots/`; do not move these root paths because Nix records their locations. `clean --dry-run` previews abandoned staged links and roots left before a transaction was recorded. Confirmed `clean` unlinks only those artifacts after profile reconciliation. All recorded generations and GC roots are retained. ASTRA does not run global Nix garbage collection or remove store paths.
 
 ## Intent identity and audit
 
@@ -19,6 +19,6 @@ Journal files use create/write/fsync/rename/directory-fsync. SQLite uses full sy
 ## Development limitations
 
 - Only per-user profiles are implemented. A privileged system applications profile is pending.
-- `upgrade` resolves installed selections at the newly selected repository revision and creates one profile transaction. `clean` and detailed `repair` remain pending.
+- `upgrade` resolves installed selections at the newly selected repository revision and creates one profile transaction. Detailed `repair` remains pending.
 - Offline install/remove is rejected; offline rollback can use retained store paths. Search and info work from the indexed database offline.
 - Nix profile command compatibility, binary cache signatures, daemon behavior, and live GC retention are unverified here because Nix is absent.

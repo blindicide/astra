@@ -30,6 +30,25 @@ for point in after_build after_staging after_root before_prepared_db after_prepa
         if "$ASTRA_BIN" list | grep -F jq >/dev/null; then exit 1; fi
         test "$(sqlite3 "$XDG_STATE_HOME/astra/state.db" "SELECT count(*) FROM transactions WHERE status='committed';")" -eq 1
     fi
+    "$ASTRA_BIN" --dry-run clean > "$TEST_DIR/$point.clean-preview"
+    grep -F 'Retention policy: keep every recorded generation and GC root' "$TEST_DIR/$point.clean-preview" >/dev/null
+    eligible=2
+    case "$point" in
+        after_build) eligible=1 ;;
+        after_root|before_prepared_db) eligible=3 ;;
+    esac
+    grep -F "Eligible abandoned ASTRA links: $eligible" "$TEST_DIR/$point.clean-preview" >/dev/null
+    retained=$(sqlite3 "$XDG_STATE_HOME/astra/state.db" "SELECT root_path FROM store_references LIMIT 1;")
+    test -L "$retained"
+    if [ "$eligible" -gt 0 ]; then
+        "$ASTRA_BIN" clean > "$TEST_DIR/$point.unconfirmed" 2>&1 && exit 1
+        grep -F 'cleanup confirmation required' "$TEST_DIR/$point.unconfirmed" >/dev/null
+    fi
+    "$ASTRA_BIN" --yes clean > "$TEST_DIR/$point.clean"
+    test -L "$retained"
+    test "$(find "$XDG_STATE_HOME/astra/profiles/default/staged" -type l | wc -l)" -eq 0
+    "$ASTRA_BIN" --dry-run clean | grep -F 'Eligible abandoned ASTRA links: 0' >/dev/null
+    "$ASTRA_BIN" history >/dev/null
 done
 for failure in BUILD STAGE ROOT ACTIVATION; do
     export XDG_STATE_HOME="$TEST_DIR/fail_$failure"
