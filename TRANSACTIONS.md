@@ -16,9 +16,11 @@ An intent is a UTF-8 JSON object serialized without whitespace by json-c. Keys a
 
 Journal files use create/write/fsync/rename/directory-fsync. SQLite uses full synchronous mode. These measures are designed for crash recovery but have only been exercised through process-exit fault injection with a fake backend, not power removal on a real filesystem or Nix host.
 
+`repair --dry-run` reports prepared work and missing GC roots for committed generations. With confirmation, `repair` restores a missing root only when the recorded path, immutable intent, journal, and target store path agree, then reconciles and audits the profile. It refuses a mismatched journal or an existing root with an unexpected target. It does not rewrite transaction intent or repair arbitrary SQLite corruption.
+
 ## Development limitations
 
 - Only per-user profiles are implemented. A privileged system applications profile is pending.
-- `upgrade` resolves installed selections at the newly selected repository revision and creates one profile transaction. Detailed `repair` remains pending.
+- `upgrade` resolves installed selections at the newly selected repository revision and creates one profile transaction. Repair of arbitrary database corruption remains outside the supported operations.
 - Offline install/remove is rejected; offline rollback can use retained store paths. Search and info work from the indexed database offline.
 - Nix profile command compatibility, binary cache signatures, daemon behavior, and live GC retention are unverified here because Nix is absent.

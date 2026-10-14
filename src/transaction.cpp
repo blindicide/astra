@@ -685,4 +685,62 @@ std::string TransactionEngine::clean(bool yes, bool dry_run) {
     for (const auto& path : changed_directories) sync_dir(path);
     return report + "Removed " + std::to_string(candidates.size()) + " abandoned ASTRA links.\n";
 }
+std::string TransactionEngine::repair(bool yes, bool dry_run) {
+    Lock lock(directory_ / "operation.lock");
+    struct MissingRoot { long long sequence; fs::path path; std::string target; };
+    std::vector<MissingRoot> missing;
+    Query roots(db_.handle(), "SELECT t.sequence,t.hash,t.intent,t.status,g.store_path,r.root_path FROM transactions t JOIN generations g ON g.id=t.target_generation LEFT JOIN store_references r ON r.generation_id=g.id AND r.store_path=g.store_path JOIN profiles p ON p.id=t.profile_id WHERE p.name=? AND t.status='committed' ORDER BY t.sequence;");
+    roots.bind(1, profile_);
+    while (roots.next()) {
+        std::string hash = roots.text(1), intent = roots.text(2), target = roots.text(4);
+        fs::path path = directory_ / "roots" / hash;
+        if (roots.text(5) != path.string() || hash_of(intent) != hash ||
+            read_journal(directory_ / "journals" / (hash + ".json")) != intent)
+            throw std::runtime_error("cannot repair a generation with inconsistent root, intent, or journal");
+        Json parsed = parse_intent(intent);
+        if (json_object_to_json_string_ext(parsed.get(), JSON_C_TO_STRING_PLAIN) != intent ||
+            intent_number(parsed.get(), "sequence") != roots.number(0) ||
+            intent_text(parsed.get(), "profile") != profile_ ||
+            intent_text(parsed.get(), "target_store") != target)
+            throw std::runtime_error("cannot repair a generation with inconsistent intent fields");
+        struct stat st{};
+        if (lstat(path.c_str(), &st) == 0) {
+            if (!S_ISLNK(st.st_mode) || store_target(path) != target)
+                throw std::runtime_error("recorded GC root has an unexpected target; operator intervention required");
+        } else if (errno == ENOENT) {
+            verify_store(target);
+            missing.push_back({roots.number(0), path, target});
+        } else throw std::runtime_error("cannot inspect recorded GC root");
+    }
+    Query pending(db_.handle(), "SELECT count(*) FROM transactions t JOIN profiles p ON p.id=t.profile_id WHERE p.name=? AND t.status='prepared';");
+    pending.bind(1, profile_); pending.next();
+    long long pending_count = pending.number(0);
+    std::string report = "Profile " + profile_ + ": " + std::to_string(missing.size()) +
+                         " missing committed GC root(s), " + std::to_string(pending_count) + " prepared transaction(s).\n";
+    for (const auto& item : missing) report += "  restore " + item.path.string() + " -> " + item.target + "\n";
+    if (dry_run) return report + "No repair applied.\n";
+    if (!missing.empty() || pending_count) {
+        if (!yes) {
+            if (!isatty(STDIN_FILENO)) throw std::runtime_error("repair confirmation required; pass --yes after reviewing --dry-run");
+            std::cout << report << "Apply supported repair? [y/N] " << std::flush;
+            std::string response;
+            std::getline(std::cin, response);
+            if (response != "y" && response != "Y") throw std::runtime_error("repair cancelled");
+        }
+        for (const auto& item : missing) {
+            struct stat st{};
+            if (lstat(item.path.c_str(), &st) == 0 || errno != ENOENT)
+                throw std::runtime_error("GC root path changed before repair; retry");
+            Query requested(db_.handle(), "INSERT INTO transaction_events(transaction_sequence,event) VALUES(?,'root_restore_requested');");
+            requested.bind(1, item.sequence); requested.done();
+            checked_process({"nix-store", "--add-root", item.path.string(), "--realise", item.target});
+            if (store_target(item.path) != item.target) throw std::runtime_error("restored GC root has an unexpected target");
+            sync_dir(item.path.parent_path());
+            Query restored(db_.handle(), "INSERT INTO transaction_events(transaction_sequence,event) VALUES(?,'root_restored');");
+            restored.bind(1, item.sequence); restored.done();
+        }
+    }
+    recover_locked();
+    return report + "Profile reconciled and audited.\n";
+}
 }

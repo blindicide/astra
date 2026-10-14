@@ -63,6 +63,28 @@ grep -F 'transaction intent is immutable' "$TEST_DIR/immutable.out"
 "$ASTRA_BIN" list | grep -F hello
 "$ASTRA_BIN" --json verify > "$TEST_DIR/verify.json"
 grep -F '"profiles_verified":2' "$TEST_DIR/verify.json"
+root_to_repair=$(sqlite3 "$XDG_STATE_HOME/astra/state.db" "SELECT root_path FROM store_references ORDER BY rowid LIMIT 1;")
+test -L "$root_to_repair"
+unlink "$root_to_repair"
+"$ASTRA_BIN" --dry-run repair > "$TEST_DIR/repair-preview.out"
+grep -F '1 missing committed GC root(s)' "$TEST_DIR/repair-preview.out"
+"$ASTRA_BIN" repair > "$TEST_DIR/repair-unconfirmed.out" 2>&1 && exit 1
+grep -F 'repair confirmation required' "$TEST_DIR/repair-unconfirmed.out"
+"$ASTRA_BIN" --yes repair > "$TEST_DIR/repair.out"
+test -L "$root_to_repair"
+grep -F 'Profile reconciled and audited' "$TEST_DIR/repair.out"
+"$ASTRA_BIN" history > /dev/null
+test "$(sqlite3 "$XDG_STATE_HOME/astra/state.db" "SELECT count(*) FROM transaction_events WHERE event='root_restored';")" -eq 1
+journal_to_test="$XDG_STATE_HOME/astra/profiles/default/journals/$(sqlite3 "$XDG_STATE_HOME/astra/state.db" "SELECT hash FROM transactions ORDER BY sequence LIMIT 1;").json"
+original_journal=$(cat "$journal_to_test")
+unlink "$root_to_repair"
+printf '%s' '{"tampered":true}' > "$journal_to_test"
+"$ASTRA_BIN" --yes repair > "$TEST_DIR/repair-tampered.out" 2>&1 && exit 1
+grep -F 'inconsistent root, intent, or journal' "$TEST_DIR/repair-tampered.out"
+test ! -L "$root_to_repair"
+printf '%s' "$original_journal" > "$journal_to_test"
+"$ASTRA_BIN" --yes repair > /dev/null
+test -L "$root_to_repair"
 test -f "$XDG_STATE_HOME/astra/state.db.backup-v1"
 mkdir -p "$TEST_DIR/next-fixture"
 sed 's/0123456789abcdef0123456789abcdef01234567/1111111111111111111111111111111111111111/g' tests/fixtures/nix-metadata.json > "$TEST_DIR/next-fixture/nix-metadata.json"

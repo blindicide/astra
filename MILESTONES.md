@@ -11,7 +11,7 @@ This ledger tracks evidence, not release claims. A checked item requires a real 
 | v0.5.0 | Generations, rollback, crash reconciliation | Fake-backend rollback and twelve fault boundaries pass; live recovery unverified |
 | v0.6.0 | Almagest-G integration and Nix bootstrap | Pending; target unavailable |
 | v0.7.0 | Upgrade, update, why, cleanup | Fake-backend tests pass, including abandoned-link cleanup; live Nix unverified |
-| v0.8.0 | Security, fault injection, repair, diagnostics | Pending |
+| v0.8.0 | Security, fault injection, repair, diagnostics | Root restoration and journal-tamper refusal pass fake-backend tests; remaining hardening pending |
 | v0.9.0 | Integration tests, docs, compatibility freeze | Pending |
 
 ## Specification §14 gates
