@@ -26,6 +26,7 @@ build/sqlite3.o: vendor/sqlite/sqlite3.c vendor/sqlite/sqlite3.h
 
 check: build/astra
 	sh tests/cli.sh ./build/astra
+	sh tests/database.sh ./build/astra
 	sh tests/repository.sh ./build/astra
 	sh tests/transactions.sh ./build/astra
 	sh tests/fault_boundaries.sh ./build/astra
