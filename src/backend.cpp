@@ -2,6 +2,7 @@
 #include "astra/process.hpp"
 
 #include <json-c/json.h>
+#include <cctype>
 #include <memory>
 #include <regex>
 #include <sstream>
@@ -37,6 +38,9 @@ void require_trusted_cache_policy(const BackendStatus& backend) {
     if (!tokener) throw std::runtime_error("cannot allocate Nix configuration parser");
     json_object* raw = json_tokener_parse_ex(tokener, result.output.data(), static_cast<int>(result.output.size()));
     bool valid = json_tokener_get_error(tokener) == json_tokener_success && raw && json_object_is_type(raw, json_type_object);
+    size_t consumed = static_cast<size_t>(json_tokener_get_parse_end(tokener));
+    while (valid && consumed < result.output.size() && std::isspace(static_cast<unsigned char>(result.output[consumed]))) ++consumed;
+    valid = valid && consumed == result.output.size();
     json_tokener_free(tokener);
     std::unique_ptr<json_object, decltype(&json_object_put)> configuration(raw, json_object_put);
     if (!valid) throw std::runtime_error("invalid Nix cache trust configuration output");

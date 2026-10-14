@@ -11,9 +11,11 @@ with an immutable 40-character revision and NAR hash. ASTRA currently accepts
 only the official `https://cache.nixos.org/` substituter and its pinned public
 key. It rejects effective Nix configurations with disabled signature checks,
 different trusted keys, or other substituters. Nix CLI operations also set
-these values explicitly. A cache miss can lead to a source build only after
-`--allow-build`; `--yes` alone is not build consent. A failed signature copy
-aborts even when building was permitted. `--offline` does not probe the cache.
+these values explicitly. Malformed configuration JSON, including trailing
+non-whitespace content, is rejected. A cache miss can lead to a source build
+only after `--allow-build`; `--yes` alone is not build consent. A failed
+signature copy aborts even when building was permitted. `--offline` does not
+probe the cache.
 
 No third-party cache or overlay approval mechanism exists yet. Adding one
 would require an explicit source and key review, provenance records, and
