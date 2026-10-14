@@ -102,7 +102,14 @@ mkdir -p "$TEST_DIR/next-fixture"
 sed 's/0123456789abcdef0123456789abcdef01234567/1111111111111111111111111111111111111111/g' tests/fixtures/nix-metadata.json > "$TEST_DIR/next-fixture/nix-metadata.json"
 sed 's/2.12.1/2.13.0/g; s/1.7.1/1.8.0/g' tests/fixtures/nix-search.json > "$TEST_DIR/next-fixture/nix-search.json"
 export ASTRA_FIXTURE_DIR="$TEST_DIR/next-fixture"
-"$ASTRA_BIN" repo update > "$TEST_DIR/update-next.out"
+profile_before_update=$(readlink "$XDG_STATE_HOME/astra/profiles/default/profile")
+committed_before_update=$(sqlite3 "$XDG_STATE_HOME/astra/state.db" "SELECT count(*) FROM transactions WHERE status='committed';")
+"$ASTRA_BIN" --json update > "$TEST_DIR/update-next.json"
+grep -F '"command":"update"' "$TEST_DIR/update-next.json"
+grep -F '"profiles_changed":false' "$TEST_DIR/update-next.json"
+test "$(readlink "$XDG_STATE_HOME/astra/profiles/default/profile")" = "$profile_before_update"
+test "$(sqlite3 "$XDG_STATE_HOME/astra/state.db" "SELECT count(*) FROM transactions WHERE status='committed';")" = "$committed_before_update"
+test "$(sqlite3 "$XDG_STATE_HOME/astra/state.db" "SELECT count(*) FROM package_selections s JOIN generations g ON g.id=s.generation_id WHERE g.active=1 AND s.package_id IN (SELECT p.id FROM packages p JOIN repository_revisions r ON r.id=p.repository_revision_id WHERE r.revision='1111111111111111111111111111111111111111');")" = 0
 "$ASTRA_BIN" --dry-run upgrade > "$TEST_DIR/upgrade.plan"
 grep -F '1111111111111111111111111111111111111111' "$TEST_DIR/upgrade.plan"
 "$ASTRA_BIN" --yes upgrade > "$TEST_DIR/upgrade.out"

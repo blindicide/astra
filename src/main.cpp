@@ -128,9 +128,12 @@ int main(int argc, char** argv) {
         }
         if ((args.size() == 2 && args[0] == "repo" && args[1] == "update") || (args.size() == 1 && args[0] == "update")) {
             size_t count = repo.update(offline);
-            if (json) std::cout << "{\"schema_version\":1,\"command\":\"repo update\",\"revision\":\""
-                                << json_escape(repo.selected_revision()) << "\",\"indexed_packages\":" << count << "}\n";
-            else std::cout << "Indexed " << count << " packages from nixpkgs " << repo.selected_revision() << '\n';
+            const std::string command = args[0] == "update" ? "update" : "repo update";
+            if (json) std::cout << "{\"schema_version\":1,\"command\":\"" << command << "\",\"revision\":\""
+                                << json_escape(repo.selected_revision()) << "\",\"indexed_packages\":" << count
+                                << ",\"profiles_changed\":false}\n";
+            else std::cout << "Indexed " << count << " packages from nixpkgs " << repo.selected_revision()
+                           << "; installed profiles unchanged\n";
             return 0;
         }
         if (args.size() == 2 && args[0] == "search") {

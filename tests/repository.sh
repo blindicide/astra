@@ -12,8 +12,13 @@ export ASTRA_FIXTURE_DIR=$(realpath tests/fixtures)
 "$ASTRA_BIN" --json repo list | grep -F '"repositories":[]'
 "$ASTRA_BIN" --offline repo update > "$TEST_DIR/offline.out" 2>&1 && exit 1
 grep -F 'unavailable with --offline' "$TEST_DIR/offline.out"
+"$ASTRA_BIN" --offline update > "$TEST_DIR/offline-update.out" 2>&1 && exit 1
+grep -F 'unavailable with --offline' "$TEST_DIR/offline-update.out"
 "$ASTRA_BIN" --json repo update > "$TEST_DIR/update.json"
 grep -F '"indexed_packages":2' "$TEST_DIR/update.json"
+"$ASTRA_BIN" --json update > "$TEST_DIR/update-alias.json"
+grep -F '"command":"update"' "$TEST_DIR/update-alias.json"
+grep -F '"profiles_changed":false' "$TEST_DIR/update-alias.json"
 "$ASTRA_BIN" --offline --json search hello > "$TEST_DIR/search.json"
 grep -F '"name":"hello"' "$TEST_DIR/search.json"
 "$ASTRA_BIN" --json info legacyPackages.x86_64-linux.jq > "$TEST_DIR/info.json"
