@@ -10,7 +10,7 @@ authorizes untrusted cache settings, signature failures, or source builds.
 changes. `--dry-run` reports the change plan without applying it.
 
 `--offline` prevents repository refresh and cache network access. Cached
-`search` and `info` use the selected SQLite index. Profile operations use
+`repo list`, `search`, and `info` use the selected SQLite index. Profile operations use
 local store contents only and fail when an output is absent. Offline `doctor`
 skips the remote cache probe, while still checking the local daemon.
 

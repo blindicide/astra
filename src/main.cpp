@@ -198,7 +198,6 @@ int main(int argc, char** argv) {
             }
         }
         if (args.size() == 2 && args[0] == "repo" && args[1] == "list") {
-            if (offline) throw std::invalid_argument("--offline is not meaningful for repo list");
             std::string revision = repo.selected_revision();
             std::string nar_hash = repo.selected_nar_hash();
             if (json) out << "{\"schema_version\":1,\"command\":\"repo list\",\"repositories\":["

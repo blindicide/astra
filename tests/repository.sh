@@ -27,6 +27,7 @@ grep -F '"name":"hello"' "$TEST_DIR/search.json"
 "$ASTRA_BIN" --json info legacyPackages.x86_64-linux.jq > "$TEST_DIR/info.json"
 grep -F '"availability":"unverified"' "$TEST_DIR/info.json"
 "$ASTRA_BIN" --json repo list | grep -F '0123456789abcdef0123456789abcdef01234567'
+"$ASTRA_BIN" --offline --json repo list | grep -F '"nar_hash":"sha256-VHg3MYVgQ12LeRSU2PSoDeKlSPD8PYYEFxxwkVVDRd0="'
 test "$(sqlite3 "$XDG_STATE_HOME/astra/state.db" 'SELECT nar_hash FROM repository_revisions;')" = 'sha256-VHg3MYVgQ12LeRSU2PSoDeKlSPD8PYYEFxxwkVVDRd0='
 sed 's@sha256-VHg3MYVgQ12LeRSU2PSoDeKlSPD8PYYEFxxwkVVDRd0=@sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=@' tests/fixtures/nix-metadata.json > "$TEST_DIR/conflicting-metadata.json"
 ASTRA_MOCK_METADATA_FILE="$TEST_DIR/conflicting-metadata.json" "$ASTRA_BIN" update > "$TEST_DIR/conflict.out" 2>&1 && exit 1
