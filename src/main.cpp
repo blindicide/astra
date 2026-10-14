@@ -4,6 +4,7 @@
 #include "astra/transaction.hpp"
 
 #include <iostream>
+#include <sqlite3.h>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -23,7 +24,8 @@ void help() {
               << "Usage: astra [--json] [--offline] [--profile NAME] [--yes] [--dry-run] <command>\n"
               << "Commands: help, doctor, verify, repo list, repo update, update, search, info,\n"
               << "          list, install, remove, upgrade, history, rollback\n"
-              << "Planned commands: why,\n"
+              << "          why\n"
+              << "Planned commands:\n"
               << "                  repair, clean\n";
 }
 }
@@ -41,7 +43,7 @@ int main(int argc, char** argv) {
             else if (arg == "--profile") { if (++i >= argc) throw std::invalid_argument("--profile needs a name"); profile = argv[i]; }
             else args.push_back(arg);
         }
-        if ((yes || dry_run || profile != "default") && (args.empty() || (args[0] != "install" && args[0] != "remove" && args[0] != "upgrade" && args[0] != "list" && args[0] != "history" && args[0] != "rollback")))
+        if ((yes || dry_run || profile != "default") && (args.empty() || (args[0] != "install" && args[0] != "remove" && args[0] != "upgrade" && args[0] != "list" && args[0] != "why" && args[0] != "history" && args[0] != "rollback")))
             throw std::invalid_argument("profile switches are only meaningful for profile commands");
         if (args.empty() || (args.size() == 1 && (args[0] == "help" || args[0] == "--help"))) {
             if (json) throw std::invalid_argument("--json is not supported for help");
@@ -57,27 +59,46 @@ int main(int argc, char** argv) {
             if (offline) throw std::invalid_argument("--offline is not meaningful for this command");
             astra::Database db(astra::state_directory() / "state.db");
             std::string integrity = db.integrity_check();
+            int profiles_verified = 0;
+            if (args[0] == "verify" && integrity == "ok") {
+                astra::RepositoryManager repository(db);
+                sqlite3_stmt* profiles = nullptr;
+                if (sqlite3_prepare_v2(db.handle(), "SELECT name FROM profiles WHERE scope='user' ORDER BY name;", -1, &profiles, nullptr) != SQLITE_OK)
+                    throw std::runtime_error(sqlite3_errmsg(db.handle()));
+                try {
+                    int step = SQLITE_ROW;
+                    while ((step = sqlite3_step(profiles)) == SQLITE_ROW) {
+                        std::string name(reinterpret_cast<const char*>(sqlite3_column_text(profiles, 0)));
+                        astra::TransactionEngine engine(db, repository, name);
+                        engine.recover();
+                        ++profiles_verified;
+                    }
+                    if (step != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db.handle()));
+                } catch (...) { sqlite3_finalize(profiles); throw; }
+                sqlite3_finalize(profiles);
+            }
             astra::BackendStatus backend = astra::detect_backend();
             if (json) {
                 std::cout << "{\"schema_version\":1,\"command\":\"" << args[0] << "\",\"database\":{\"integrity\":\""
                           << json_escape(integrity) << "\",\"schema_version\":" << db.schema_version()
-                          << "},\"backend\":{\"found\":" << (backend.executable_found ? "true" : "false")
+                          << "},\"profiles_verified\":" << profiles_verified << ",\"backend\":{\"found\":" << (backend.executable_found ? "true" : "false")
                           << ",\"candidate_version\":" << (backend.version_supported ? "true" : "false")
                           << ",\"version\":\"" << json_escape(backend.version) << "\",\"detail\":\""
                           << json_escape(backend.detail) << "\"}}\n";
             } else {
                 std::cout << "Database: " << integrity << " (schema " << db.schema_version() << ")\n"
-                          << "Backend: " << backend.detail << "\n";
+                          << "Profiles verified: " << profiles_verified << "\nBackend: " << backend.detail << "\n";
             }
             return integrity == "ok" && backend.version_supported ? 0 : 1;
         }
         astra::Database db(astra::state_directory() / "state.db");
         astra::RepositoryManager repo(db);
-        if (!args.empty() && (args[0] == "install" || args[0] == "remove" || args[0] == "upgrade" || args[0] == "list" || args[0] == "history" || args[0] == "rollback")) {
+        if (!args.empty() && (args[0] == "install" || args[0] == "remove" || args[0] == "upgrade" || args[0] == "list" || args[0] == "why" || args[0] == "history" || args[0] == "rollback")) {
             if (json && !(args[0] == "history" && args.size() == 3 && args[1] == "show"))
                 throw std::invalid_argument("--json is not yet available for this profile command");
             astra::TransactionEngine engine(db, repo, profile);
             if (args[0] == "list" && args.size() == 1) { engine.recover(); std::cout << engine.list(); return 0; }
+            if (args[0] == "why" && args.size() == 2) { engine.recover(); std::cout << engine.why(args[1]); return 0; }
             if (args[0] == "history" && args.size() == 1) { engine.recover(); std::cout << engine.history(); return 0; }
             if (args[0] == "history" && args.size() == 3 && args[1] == "show") {
                 engine.recover(); std::cout << engine.history_show(args[2], json); return 0;

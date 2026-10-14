@@ -17,6 +17,10 @@ grep -F 'committed' "$TEST_DIR/install.out"
 "$ASTRA_BIN" list > "$TEST_DIR/list.out"
 grep -F 'hello' "$TEST_DIR/list.out"
 grep -F 'jq' "$TEST_DIR/list.out"
+"$ASTRA_BIN" why hello > "$TEST_DIR/why-direct.out"
+grep -F 'direct ASTRA selection' "$TEST_DIR/why-direct.out"
+"$ASTRA_BIN" --offline why sharedlib > "$TEST_DIR/why-closure.out"
+test "$(grep -c 'runtime closure of' "$TEST_DIR/why-closure.out")" = 2
 test "$(sqlite3 "$XDG_STATE_HOME/astra/state.db" "SELECT count(*) FROM transactions WHERE status='committed';")" = 1
 test "$(sqlite3 "$XDG_STATE_HOME/astra/state.db" "SELECT count(*) FROM package_selections;")" = 2
 "$ASTRA_BIN" --yes remove jq > "$TEST_DIR/remove.out"
@@ -57,6 +61,8 @@ grep -F 'transaction intent is immutable' "$TEST_DIR/immutable.out"
 "$ASTRA_BIN" --profile second --yes install jq > "$TEST_DIR/second.out"
 "$ASTRA_BIN" --profile second list | grep -F jq
 "$ASTRA_BIN" list | grep -F hello
+"$ASTRA_BIN" --json verify > "$TEST_DIR/verify.json"
+grep -F '"profiles_verified":2' "$TEST_DIR/verify.json"
 test -f "$XDG_STATE_HOME/astra/state.db.backup-v1"
 mkdir -p "$TEST_DIR/next-fixture"
 sed 's/0123456789abcdef0123456789abcdef01234567/1111111111111111111111111111111111111111/g' tests/fixtures/nix-metadata.json > "$TEST_DIR/next-fixture/nix-metadata.json"
@@ -90,3 +96,6 @@ sqlite3 "$XDG_STATE_HOME/astra/state.db" "UPDATE transactions SET target_generat
 grep -F 'transaction generation link is missing' "$TEST_DIR/tamper-link.out"
 sqlite3 "$XDG_STATE_HOME/astra/state.db" "UPDATE transactions SET target_generation=$last_generation WHERE sequence=$last_sequence;"
 "$ASTRA_BIN" history > "$TEST_DIR/clean-history.out"
+sqlite3 "$XDG_STATE_HOME/astra/state.db" "DELETE FROM transaction_events WHERE transaction_sequence=$last_sequence AND event='recovered_committed';"
+"$ASTRA_BIN" history > "$TEST_DIR/tamper-events.out" 2>&1 && exit 1
+grep -F 'transaction outcome events are incomplete' "$TEST_DIR/tamper-events.out"

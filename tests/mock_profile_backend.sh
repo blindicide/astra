@@ -32,6 +32,12 @@ case "${0##*/}" in
     nix-store)
         case "$1" in
             --verify-path) test "${2#/nix/store/}" != "$2" ;;
+            --query)
+                test "$2" = --requisites
+                case "$3" in
+                    *-hello|*-jq) printf '%s\n' "$3" '/nix/store/ffffffffffffffffffffffffffffffff-sharedlib-1.0' ;;
+                    *) exit 4 ;;
+                esac ;;
             --add-root) test "${ASTRA_MOCK_FAIL_ROOT:-0}" != 1; test "$3" = --realise; ln -s "$4" "$2" ;;
             *) exit 4 ;;
         esac ;;

@@ -10,7 +10,7 @@ This ledger tracks evidence, not release claims. A checked item requires a real 
 | v0.4.0 | Canonical transaction IDs, journal, activation | Local hash/journal checks pass; live switch durability unverified |
 | v0.5.0 | Generations, rollback, crash reconciliation | Fake-backend rollback and twelve fault boundaries pass; live recovery unverified |
 | v0.6.0 | Almagest-G integration and Nix bootstrap | Pending; target unavailable |
-| v0.7.0 | Upgrade, update, why, cleanup | Upgrade and update fake-backend tests pass; why and cleanup pending |
+| v0.7.0 | Upgrade, update, why, cleanup | Upgrade, update, and why fake-backend tests pass; cleanup pending |
 | v0.8.0 | Security, fault injection, repair, diagnostics | Pending |
 | v0.9.0 | Integration tests, docs, compatibility freeze | Pending |
 

@@ -332,9 +332,19 @@ void TransactionEngine::recover_locked() {
         fs::path journal = directory_ / "journals" / (hash + ".json");
         if (fs::exists(journal) && read_journal(journal) != intent)
             throw std::runtime_error("transaction journal mismatch; operator intervention required");
+        Query events(db, "SELECT event FROM transaction_events WHERE transaction_sequence=? ORDER BY id;");
+        events.bind(1, audit.number(5));
+        bool prepared_event = false, outcome_event = false;
+        while (events.next()) {
+            if (events.text(0) == "prepared") prepared_event = true;
+            if ((status == "committed" && events.text(0) == "recovered_committed") ||
+                (status == "not_applied" && events.text(0) == "recovered_not_applied")) outcome_event = true;
+        }
+        if (!prepared_event || !outcome_event)
+            throw std::runtime_error("transaction outcome events are incomplete; operator intervention required");
         if (status == "committed") {
             if (!fs::exists(journal)) throw std::runtime_error("committed transaction has no journal; operator intervention required");
-            if (audit.text(4).empty() || store_target(audit.text(4)) != audit.text(3))
+            if (audit.text(4) != (directory_ / "roots" / hash).string() || store_target(audit.text(4)) != audit.text(3))
                 throw std::runtime_error("retained generation GC root is missing; operator intervention required");
             verify_store(audit.text(3));
             previous_hash = hash;
@@ -591,6 +601,43 @@ std::string TransactionEngine::history_show(const std::string& identifier, bool 
                          "\nPrevious generation: " + std::to_string(previous) +
                          "\nTarget generation: " + std::to_string(target) + "\nIntent: " + intent + "\nEvents:\n";
     while (events.next()) result += "  " + events.text(1) + " " + events.text(0) + "\n";
+    return result;
+}
+std::string TransactionEngine::why(const std::string& identifier) const {
+    if (identifier.empty() || identifier.size() > 256 ||
+        !std::regex_match(identifier, std::regex(R"([A-Za-z0-9+._?=-]+|/nix/store/[a-z0-9]{32}-[A-Za-z0-9+._?=-]+)")))
+        throw std::invalid_argument("invalid package or store-path identifier");
+    Query selections(db_.handle(), "SELECT p.attribute,s.output_path FROM profiles pr JOIN generations g ON g.profile_id=pr.id AND g.active=1 JOIN package_selections s ON s.generation_id=g.id JOIN packages p ON p.id=s.package_id WHERE pr.name=? ORDER BY p.attribute;");
+    selections.bind(1, profile_);
+    std::string result;
+    bool found = false;
+    while (selections.next()) {
+        std::string attribute = selections.text(0), output = selections.text(1);
+        std::string short_name = attribute.substr(attribute.rfind('.') + 1);
+        if (identifier == attribute || identifier == short_name || identifier == output) {
+            result += attribute + " is a direct ASTRA selection in profile " + profile_ + "\n  output: " + output + "\n";
+            found = true;
+            continue;
+        }
+        ProcessResult closure = run_process({"nix-store", "--query", "--requisites", output}, 120, 8 * 1024 * 1024);
+        if (closure.status != 0 || closure.timed_out || closure.truncated)
+            throw std::runtime_error("cannot query Nix store closure for " + attribute + ": " + closure.error.substr(0, 400));
+        size_t start = 0;
+        while (start < closure.output.size()) {
+            size_t end = closure.output.find('\n', start);
+            if (end == std::string::npos) end = closure.output.size();
+            std::string path = closure.output.substr(start, end - start);
+            if (!path.empty() && !std::regex_match(path, std::regex(R"(/nix/store/[a-z0-9]{32}-[A-Za-z0-9+._?=-]+)")))
+                throw std::runtime_error("Nix returned an invalid closure path");
+            std::string basename = path.empty() ? "" : path.substr(path.find('-', 11) + 1);
+            if (path == identifier || basename == identifier || basename.rfind(identifier + "-", 0) == 0) {
+                result += path + " is in the runtime closure of " + attribute + "\n  selected output: " + output + "\n";
+                found = true;
+            }
+            start = end + 1;
+        }
+    }
+    if (!found) throw std::runtime_error("no matching package or store path is in this ASTRA profile's recorded closure");
     return result;
 }
 }
