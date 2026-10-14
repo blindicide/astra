@@ -1,6 +1,7 @@
 #include "astra/database.hpp"
 
 #include <cstdlib>
+#include <fcntl.h>
 #include <stdexcept>
 #include <string>
 #include <sys/stat.h>
@@ -36,20 +37,35 @@ fs::path state_directory() {
     return path;
 }
 
-Database::Database(const fs::path& path) {
+Database::Database(const fs::path& path) : path_(path) {
     struct stat entry{};
-    if (lstat(path.c_str(), &entry) == 0 && (!S_ISREG(entry.st_mode) || entry.st_uid != geteuid() || (entry.st_mode & 0077)))
-        throw std::runtime_error("ASTRA database has unsafe ownership or permissions");
-    if (sqlite3_open_v2(path.c_str(), &db_, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nullptr) != SQLITE_OK) {
+    if (lstat(path.c_str(), &entry) == 0) {
+        if (!S_ISREG(entry.st_mode) || entry.st_uid != geteuid() || (entry.st_mode & 0077))
+            throw std::runtime_error("ASTRA database has unsafe ownership or permissions");
+    } else if (errno == ENOENT) {
+        int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
+        if (fd < 0) throw std::runtime_error("cannot create ASTRA database securely");
+        close(fd);
+    } else throw std::runtime_error("cannot inspect ASTRA database");
+    if (sqlite3_open_v2(path.c_str(), &db_, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_NOFOLLOW, nullptr) != SQLITE_OK) {
         std::string message = db_ ? sqlite3_errmsg(db_) : "cannot open SQLite database";
         if (db_) sqlite3_close(db_);
         db_ = nullptr;
         throw std::runtime_error(message);
     }
-    chmod(path.c_str(), 0600);
     sqlite3_busy_timeout(db_, 5000);
     exec("PRAGMA foreign_keys=ON;");
     exec("PRAGMA journal_mode=DELETE;");
+    exec("PRAGMA synchronous=FULL;");
+    {
+        sqlite3_stmt* check = nullptr;
+        if (sqlite3_prepare_v2(db_, "SELECT max(version) FROM schema_versions;", -1, &check, nullptr) == SQLITE_OK) {
+            int result = sqlite3_step(check);
+            int version = result == SQLITE_ROW ? sqlite3_column_int(check, 0) : 0;
+            sqlite3_finalize(check);
+            if (version > 2) throw std::runtime_error("ASTRA database schema is newer than this executable");
+        } else if (check) sqlite3_finalize(check);
+    }
     exec("BEGIN IMMEDIATE;");
     try {
         exec("CREATE TABLE IF NOT EXISTS schema_versions(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);");
@@ -66,6 +82,38 @@ Database::Database(const fs::path& path) {
         exec("INSERT OR IGNORE INTO schema_versions(version) VALUES(1);");
         exec("COMMIT;");
     } catch (...) { sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr); throw; }
+    if (schema_version() == 1) {
+        fs::path backup = path;
+        backup += ".backup-v1";
+        struct stat backup_entry{};
+        if (lstat(backup.c_str(), &backup_entry) == 0 &&
+            (!S_ISREG(backup_entry.st_mode) || backup_entry.st_uid != geteuid() || (backup_entry.st_mode & 0077)))
+            throw std::runtime_error("ASTRA migration backup path is unsafe");
+        if (!fs::exists(backup)) {
+            sqlite3* destination = nullptr;
+            if (sqlite3_open_v2(backup.c_str(), &destination, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr) != SQLITE_OK) {
+                if (destination) sqlite3_close(destination);
+                throw std::runtime_error("cannot create database migration backup");
+            }
+            chmod(backup.c_str(), 0600);
+            sqlite3_backup* copy = sqlite3_backup_init(destination, "main", db_, "main");
+            if (!copy || sqlite3_backup_step(copy, -1) != SQLITE_DONE) {
+                if (copy) sqlite3_backup_finish(copy);
+                sqlite3_close(destination);
+                throw std::runtime_error("cannot back up database before migration");
+            }
+            sqlite3_backup_finish(copy);
+            sqlite3_close(destination);
+        }
+        exec("BEGIN IMMEDIATE;");
+        try {
+            exec("CREATE TRIGGER immutable_transaction_intent BEFORE UPDATE OF hash,intent,sequence,profile_id ON transactions BEGIN SELECT RAISE(ABORT,'transaction intent is immutable'); END;");
+            exec("CREATE TRIGGER immutable_transaction_delete BEFORE DELETE ON transactions BEGIN SELECT RAISE(ABORT,'transaction history is immutable'); END;");
+            exec("CREATE UNIQUE INDEX one_active_generation ON generations(profile_id) WHERE active=1;");
+            exec("INSERT INTO schema_versions(version) VALUES(2);");
+            exec("COMMIT;");
+        } catch (...) { sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr); throw; }
+    }
 }
 
 Database::~Database() { if (db_) sqlite3_close(db_); }

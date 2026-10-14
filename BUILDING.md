@@ -1,6 +1,6 @@
 # Building ASTRA
 
-Prerequisites for this development build: C++20 compiler (tested with GCC 13.3), C compiler, GNU Make, POSIX/Linux libc, pthread/dl libraries, and json-c development files (tested with 0.17). SQLite 3.46.1 source is included. Nix is not needed to compile, run `--version`, or run `doctor`.
+Prerequisites for this development build: C++20 compiler (tested with GCC 13.3), C compiler, GNU Make, POSIX/Linux libc, pthread/dl libraries, json-c development files (tested with 0.17), and OpenSSL libcrypto headers/library (tested with 3.0.13). SQLite 3.46.1 source is included. Nix is not needed to compile, run `--version`, or run `doctor`.
 
 ```sh
 make -j2

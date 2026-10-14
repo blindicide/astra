@@ -5,7 +5,7 @@ CXXFLAGS ?= -O2
 CFLAGS ?= -O2
 CPPFLAGS += -Iinclude -Ivendor/sqlite -D_POSIX_C_SOURCE=200809L
 ASTRA_WARN := -Wall -Wextra -Wpedantic -Werror
-LDLIBS := -ldl -lpthread -ljson-c
+LDLIBS := -ldl -lpthread -ljson-c -lcrypto
 
 CPP_SOURCES := $(wildcard src/*.cpp)
 CPP_OBJECTS := $(patsubst src/%.cpp,build/%.o,$(CPP_SOURCES))
@@ -27,6 +27,8 @@ build/sqlite3.o: vendor/sqlite/sqlite3.c vendor/sqlite/sqlite3.h
 check: build/astra
 	sh tests/cli.sh ./build/astra
 	sh tests/repository.sh ./build/astra
+	sh tests/transactions.sh ./build/astra
+	sh tests/fault_boundaries.sh ./build/astra
 
 install: build/astra
 	install -Dm755 build/astra $(DESTDIR)$(PREFIX)/bin/astra

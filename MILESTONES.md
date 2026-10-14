@@ -4,11 +4,11 @@ This ledger tracks evidence, not release claims. A checked item requires a real 
 
 | Milestone | Scope | Status |
 | --- | --- | --- |
-| v0.1.0 | Build, CLI, SQLite schema, backend detection | In progress |
-| v0.2.0 | Pinned nixpkgs revisions, indexed metadata, search/info | Pending |
-| v0.3.0 | Multi-package install/removal, managed profile | Pending |
-| v0.4.0 | Canonical transaction IDs, journal, activation | Pending |
-| v0.5.0 | Generations, rollback, crash reconciliation | Pending |
+| v0.1.0 | Build, CLI, SQLite schema, backend detection | Local tests pass; live backend unavailable |
+| v0.2.0 | Pinned nixpkgs revisions, indexed metadata, search/info | Fake-backend tests pass; live indexing unverified |
+| v0.3.0 | Multi-package install/removal, managed profile | Fake-backend tests pass; live profile operations unverified |
+| v0.4.0 | Canonical transaction IDs, journal, activation | Local hash/journal checks pass; live switch durability unverified |
+| v0.5.0 | Generations, rollback, crash reconciliation | Fake-backend rollback and twelve fault boundaries pass; live recovery unverified |
 | v0.6.0 | Almagest-G integration and Nix bootstrap | Pending; target unavailable |
 | v0.7.0 | Upgrade, update, why, cleanup | Pending |
 | v0.8.0 | Security, fault injection, repair, diagnostics | Pending |
@@ -21,13 +21,13 @@ This ledger tracks evidence, not release claims. A checked item requires a real 
 | 1 | Offline source archive builds on conventional Linux | Pending |
 | 2 | Mandatory automated tests pass | Pending |
 | 3 | Supported Nix backend operational and detected | Unverified; no Nix installed |
-| 4 | Search and package metadata work | Pending |
-| 5 | Multi-package atomic profile transaction | Pending |
-| 6 | Removal and upgrade work | Pending |
-| 7 | Immutable transaction hash and audit trail | Pending |
-| 8 | Rollback restores managed profile | Pending |
-| 9 | Power-loss fault injection reconciles every state | Pending |
-| 10 | GC protects active and rollback generations | Pending |
+| 4 | Search and package metadata work | Fake-backend tests pass; live Nix unverified |
+| 5 | Multi-package atomic profile transaction | Fake-backend test passes; live Nix unverified |
+| 6 | Removal and upgrade work | Removal fake-backend test passes; upgrade pending |
+| 7 | Immutable transaction hash and audit trail | Local hash/journal and SQLite trigger tests pass; full audit pending |
+| 8 | Rollback restores managed profile | Fake-backend test passes; live Nix unverified |
+| 9 | Power-loss fault injection reconciles every state | Twelve boundary tests pass; full-disk, permission, live power loss pending |
+| 10 | GC protects active and rollback generations | Root registration mocked and audited; live Nix GC unverified |
 | 11 | Untrusted cache outputs rejected | Pending |
 | 12 | Native Almagest-G build passes | Unverified; no target |
 | 13 | Almagest-G Nix bootstrap validated | Unverified; no target |
