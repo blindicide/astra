@@ -28,6 +28,7 @@ check: build/astra
 	sh tests/cli.sh ./build/astra
 	sh tests/database.sh ./build/astra
 	sh tests/repository.sh ./build/astra
+	sh tests/diagnostics.sh ./build/astra
 	sh tests/transactions.sh ./build/astra
 	sh tests/fault_boundaries.sh ./build/astra
 	sh tests/bootstrap.sh

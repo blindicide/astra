@@ -165,3 +165,6 @@ export XDG_STATE_HOME="$TEST_DIR/build-state"
 ASTRA_FIXTURE_DIR=$(realpath tests/fixtures) "$ASTRA_BIN" repo update > /dev/null
 ASTRA_MOCK_MISSING_STORE=1 ASTRA_MOCK_CACHE_AVAILABLE=0 "$ASTRA_BIN" --allow-build --yes install hello > "$TEST_DIR/consented-build.out"
 grep -F committed "$TEST_DIR/consented-build.out"
+"$ASTRA_BIN" --quiet --yes --profile quiet install hello > "$TEST_DIR/quiet-install.out"
+test ! -s "$TEST_DIR/quiet-install.out"
+"$ASTRA_BIN" --profile quiet list | grep -F hello

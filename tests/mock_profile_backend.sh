@@ -19,6 +19,16 @@ case "${0##*/}" in
             esac
             shift 3
         done
+        if [ "$1" = store ] && [ "$2" = ping ] && [ "$3" = --store ]; then
+            case "$4" in
+                daemon) test "${ASTRA_MOCK_FAIL_DAEMON:-0}" != 1 ;;
+                'https://cache.nixos.org/')
+                    test "${ASTRA_MOCK_FAIL_CACHE_TOUCH:-0}" != 1
+                    test "${ASTRA_MOCK_FAIL_CACHE_PING:-0}" != 1 ;;
+                *) exit 4 ;;
+            esac
+            exit 0
+        fi
         case "$1 $2" in
             'flake metadata') cat "$ASTRA_FIXTURE_DIR/nix-metadata.json" ;;
             'search --json') cat "$ASTRA_FIXTURE_DIR/nix-search.json" ;;
@@ -67,6 +77,7 @@ case "${0##*/}" in
             *) exit 4 ;;
         esac ;;
     nix-store)
+        if [ "$1" = --version ]; then echo 'nix-store (Nix) 2.28.0'; exit 0; fi
         case "$1" in
             --verify-path)
                 test "${2#/nix/store/}" != "$2"
@@ -85,6 +96,7 @@ case "${0##*/}" in
             *) exit 4 ;;
         esac ;;
     nix-env)
+        if [ "$1" = --version ]; then echo 'nix-env (Nix) 2.28.0'; exit 0; fi
         if [ "${ASTRA_MOCK_FAIL_ACTIVATION:-0}" = 1 ]; then echo 'mock activation failure' >&2; exit 5; fi
         test "$1" = --profile && test "$3" = --set
         ln -s "$4" "$2.new"
