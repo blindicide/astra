@@ -10,7 +10,7 @@ This ledger tracks evidence, not release claims. A checked item requires a real 
 | v0.4.0 | Canonical transaction IDs, journal, activation | Local hash/journal checks pass; live switch durability unverified |
 | v0.5.0 | Generations, rollback, crash reconciliation | Fake-backend rollback and twelve fault boundaries pass; live recovery unverified |
 | v0.6.0 | Almagest-G integration and Nix bootstrap | Pending; target unavailable |
-| v0.7.0 | Upgrade, update, why, cleanup | Pending |
+| v0.7.0 | Upgrade, update, why, cleanup | Upgrade and update fake-backend tests pass; why and cleanup pending |
 | v0.8.0 | Security, fault injection, repair, diagnostics | Pending |
 | v0.9.0 | Integration tests, docs, compatibility freeze | Pending |
 
@@ -23,8 +23,8 @@ This ledger tracks evidence, not release claims. A checked item requires a real 
 | 3 | Supported Nix backend operational and detected | Unverified; no Nix installed |
 | 4 | Search and package metadata work | Fake-backend tests pass; live Nix unverified |
 | 5 | Multi-package atomic profile transaction | Fake-backend test passes; live Nix unverified |
-| 6 | Removal and upgrade work | Removal fake-backend test passes; upgrade pending |
-| 7 | Immutable transaction hash and audit trail | Local hash/journal and SQLite trigger tests pass; full audit pending |
+| 6 | Removal and upgrade work | Removal and upgrade fake-backend tests pass; live Nix unverified |
+| 7 | Immutable transaction hash and audit trail | Local hash/journal, history inspection, chain/selection audit, and SQLite trigger tests pass; live durability unverified |
 | 8 | Rollback restores managed profile | Fake-backend test passes; live Nix unverified |
 | 9 | Power-loss fault injection reconciles every state | Twelve boundary tests pass; full-disk, permission, live power loss pending |
 | 10 | GC protects active and rollback generations | Root registration mocked and audited; live Nix GC unverified |

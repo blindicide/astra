@@ -166,4 +166,13 @@ PackageRecord RepositoryManager::info(const std::string& identifier) const {
     if (statement.next()) throw std::runtime_error("package name is ambiguous; use the full attribute identifier");
     return record;
 }
+PackageRecord RepositoryManager::info_for_system(const std::string& identifier, const std::string& system) const {
+    if (identifier.empty() || identifier.size() > 256 || system.empty()) throw std::invalid_argument("invalid package identifier or system");
+    Statement statement(database_.handle(), "SELECT p.attribute,p.name,p.version,coalesce(p.description,''),coalesce(p.license,''),p.system,r.revision FROM packages p JOIN repository_revisions r ON r.id=p.repository_revision_id JOIN repositories repo ON repo.id=r.repository_id WHERE repo.name='nixpkgs' AND r.revision=repo.selected_revision AND p.system=? AND (p.attribute=? OR p.name=?) LIMIT 2;");
+    statement.bind(1, system); statement.bind(2, identifier); statement.bind(3, identifier);
+    if (!statement.next()) throw std::runtime_error("package is unavailable for this Nix host in the selected revision");
+    PackageRecord record = row(statement);
+    if (statement.next()) throw std::runtime_error("package name is ambiguous for this Nix host; use the full attribute identifier");
+    return record;
+}
 }

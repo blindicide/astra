@@ -5,6 +5,7 @@
 - Add per-user managed profiles with install, removal, listing, and auditable rollback.
 - Add SHA-256 canonical transaction intents, private durable journals, profile locks, retained generation roots, and reconciliation around activation.
 - Add SQLite schema migration backup, immutable intent triggers, deterministic fake-backend integration tests, and twelve crash-boundary tests.
+- Add pinned-revision upgrades, detailed history inspection, and audit checks against the recorded generation chain and package selections.
 - Live Nix and Almagest-G validation remain outstanding.
 
 ## 0.2.0-dev

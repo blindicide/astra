@@ -22,8 +22,8 @@ void help() {
     std::cout << "ASTRA 0.3.0-dev — nixpkgs-backed application manager (development)\n"
               << "Usage: astra [--json] [--offline] [--profile NAME] [--yes] [--dry-run] <command>\n"
               << "Commands: help, doctor, verify, repo list, repo update, update, search, info,\n"
-              << "          list, install, remove, history, rollback\n"
-              << "Planned commands: why, upgrade,\n"
+              << "          list, install, remove, upgrade, history, rollback\n"
+              << "Planned commands: why,\n"
               << "                  repair, clean\n";
 }
 }
@@ -41,7 +41,7 @@ int main(int argc, char** argv) {
             else if (arg == "--profile") { if (++i >= argc) throw std::invalid_argument("--profile needs a name"); profile = argv[i]; }
             else args.push_back(arg);
         }
-        if ((yes || dry_run || profile != "default") && (args.empty() || (args[0] != "install" && args[0] != "remove" && args[0] != "list" && args[0] != "history" && args[0] != "rollback")))
+        if ((yes || dry_run || profile != "default") && (args.empty() || (args[0] != "install" && args[0] != "remove" && args[0] != "upgrade" && args[0] != "list" && args[0] != "history" && args[0] != "rollback")))
             throw std::invalid_argument("profile switches are only meaningful for profile commands");
         if (args.empty() || (args.size() == 1 && (args[0] == "help" || args[0] == "--help"))) {
             if (json) throw std::invalid_argument("--json is not supported for help");
@@ -73,17 +73,21 @@ int main(int argc, char** argv) {
         }
         astra::Database db(astra::state_directory() / "state.db");
         astra::RepositoryManager repo(db);
-        if (!args.empty() && (args[0] == "install" || args[0] == "remove" || args[0] == "list" || args[0] == "history" || args[0] == "rollback")) {
-            if (json) throw std::invalid_argument("--json is not yet available for profile commands");
+        if (!args.empty() && (args[0] == "install" || args[0] == "remove" || args[0] == "upgrade" || args[0] == "list" || args[0] == "history" || args[0] == "rollback")) {
+            if (json && !(args[0] == "history" && args.size() == 3 && args[1] == "show"))
+                throw std::invalid_argument("--json is not yet available for this profile command");
             astra::TransactionEngine engine(db, repo, profile);
             if (args[0] == "list" && args.size() == 1) { engine.recover(); std::cout << engine.list(); return 0; }
             if (args[0] == "history" && args.size() == 1) { engine.recover(); std::cout << engine.history(); return 0; }
+            if (args[0] == "history" && args.size() == 3 && args[1] == "show") {
+                engine.recover(); std::cout << engine.history_show(args[2], json); return 0;
+            }
             if (args[0] == "rollback" && args.size() <= 2) {
                 std::string result = engine.mutate("rollback", std::vector<std::string>(args.begin() + 1, args.end()), yes, dry_run, offline);
                 std::cout << (dry_run ? result : "Transaction " + result + " committed") << '\n';
                 return 0;
             }
-            if ((args[0] == "install" || args[0] == "remove") && args.size() > 1) {
+            if (((args[0] == "install" || args[0] == "remove") && args.size() > 1) || args[0] == "upgrade") {
                 std::string result = engine.mutate(args[0], std::vector<std::string>(args.begin() + 1, args.end()), yes, dry_run, offline);
                 std::cout << (dry_run ? result : "Transaction " + result + " committed") << '\n';
                 return 0;

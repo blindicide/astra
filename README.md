@@ -6,7 +6,7 @@ ASTRA owns repository policy, transaction records, and managed profiles; Nix is 
 
 Build locally with `make -j2` and run `make check`. No build step downloads dependencies. See [BUILDING.md](BUILDING.md).
 
-After a live Nix backend is validated, use `astra repo update`, then `astra --yes install hello jq`. Review the printed Nix build preview before supplying `--yes`; interactive use asks for confirmation. `astra list`, `astra history`, and `astra rollback` operate on ASTRA's own `default` profile. Choose another per-user profile with `--profile NAME`. The managed executable path is `$XDG_STATE_HOME/astra/profiles/NAME/profile/bin` (or `$HOME/.local/state/astra/profiles/NAME/profile/bin` when XDG_STATE_HOME is unset); add it to your shell PATH explicitly if desired. ASTRA does not alter your existing Nix profiles or shell configuration.
+After a live Nix backend is validated, use `astra repo update`, then `astra --yes install hello jq`. Review the printed Nix build preview before supplying `--yes`; interactive use asks for confirmation. `astra list`, `astra history`, `astra history show ID`, `astra upgrade`, and `astra rollback` operate on ASTRA's own `default` profile. Choose another per-user profile with `--profile NAME`. The managed executable path is `$XDG_STATE_HOME/astra/profiles/NAME/profile/bin` (or `$HOME/.local/state/astra/profiles/NAME/profile/bin` when XDG_STATE_HOME is unset); add it to your shell PATH explicitly if desired. ASTRA does not alter your existing Nix profiles or shell configuration.
 
 See [TRANSACTIONS.md](TRANSACTIONS.md) for hash construction, activation, recovery, and rollback limits.
 

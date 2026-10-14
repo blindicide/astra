@@ -114,6 +114,30 @@ std::string hash_of(const std::string& value) {
     SHA256(reinterpret_cast<const unsigned char*>(value.data()), value.size(), digest);
     return hex(digest, sizeof(digest));
 }
+Json parse_intent(const std::string& value) {
+    json_tokener* tokener = json_tokener_new();
+    if (!tokener) throw std::runtime_error("cannot allocate transaction parser");
+    json_object* object = json_tokener_parse_ex(tokener, value.data(), static_cast<int>(value.size()));
+    bool okay = json_tokener_get_error(tokener) == json_tokener_success && object && json_object_is_type(object, json_type_object);
+    json_tokener_free(tokener);
+    if (!okay) {
+        if (object) json_object_put(object);
+        throw std::runtime_error("transaction intent is not valid JSON; operator intervention required");
+    }
+    return Json(object, json_object_put);
+}
+json_object* required_field(json_object* object, const char* key, json_type type) {
+    json_object* value = nullptr;
+    if (!json_object_object_get_ex(object, key, &value) || !json_object_is_type(value, type))
+        throw std::runtime_error("transaction intent has an invalid field; operator intervention required");
+    return value;
+}
+std::string intent_text(json_object* object, const char* key) {
+    return json_object_get_string(required_field(object, key, json_type_string));
+}
+long long intent_number(json_object* object, const char* key) {
+    return json_object_get_int64(required_field(object, key, json_type_int));
+}
 std::string nonce() {
     unsigned char bytes[16];
     if (getrandom(bytes, sizeof(bytes), 0) != static_cast<ssize_t>(sizeof(bytes))) throw std::runtime_error("cannot obtain transaction nonce");
@@ -250,11 +274,61 @@ void TransactionEngine::recover_locked() {
     std::string recorded = expected.next() ? expected.text(0) : "";
     if (active != recorded) throw std::runtime_error("active profile and database disagree; operator intervention required");
     if (!active.empty()) verify_store(active);
-    Query audit(db, "SELECT t.hash,t.intent,t.status,g.store_path,r.root_path FROM transactions t JOIN generations g ON g.id=t.target_generation LEFT JOIN store_references r ON r.generation_id=g.id AND r.store_path=g.store_path WHERE t.profile_id=?;");
+    Query audit(db, "SELECT t.hash,t.intent,t.status,g.store_path,r.root_path,t.sequence,coalesce(t.previous_generation,0),g.id FROM transactions t JOIN generations g ON g.id=t.target_generation LEFT JOIN store_references r ON r.generation_id=g.id AND r.store_path=g.store_path WHERE t.profile_id=? ORDER BY t.sequence;");
     audit.bind(1, pid);
+    std::string previous_hash;
+    long long previous_generation = 0;
+    long long audited = 0;
     while (audit.next()) {
+        ++audited;
         std::string hash = audit.text(0), intent = audit.text(1), status = audit.text(2);
         if (hash_of(intent) != hash) throw std::runtime_error("transaction hash mismatch; operator intervention required");
+        Json parsed = parse_intent(intent);
+        if (json_object_to_json_string_ext(parsed.get(), JSON_C_TO_STRING_PLAIN) != intent ||
+            intent_number(parsed.get(), "schema_version") != 1 ||
+            intent_number(parsed.get(), "sequence") != audit.number(5) ||
+            intent_text(parsed.get(), "profile") != profile_ ||
+            intent_text(parsed.get(), "previous_hash") != previous_hash ||
+            intent_text(parsed.get(), "target_store") != audit.text(3) ||
+            audit.number(6) != previous_generation ||
+            !std::regex_match(intent_text(parsed.get(), "nonce"), std::regex("[0-9a-f]{32}")) ||
+            !std::regex_match(intent_text(parsed.get(), "repository_revision"), std::regex("[0-9a-f]{40}")))
+            throw std::runtime_error("transaction intent does not match its generation chain; operator intervention required");
+        Query previous_store(db, "SELECT store_path FROM generations WHERE id=?;");
+        previous_store.bind(1, previous_generation);
+        std::string expected_previous_store = previous_store.next() ? previous_store.text(0) : "";
+        if (intent_text(parsed.get(), "previous_store") != expected_previous_store)
+            throw std::runtime_error("transaction previous store reference differs from history; operator intervention required");
+        std::string operation = intent_text(parsed.get(), "operation");
+        if (operation != "install" && operation != "remove" && operation != "upgrade" && operation != "rollback")
+            throw std::runtime_error("transaction operation is invalid; operator intervention required");
+        long long restored = intent_number(parsed.get(), "restored_generation");
+        if ((operation == "rollback") != (restored > 0))
+            throw std::runtime_error("transaction restored generation is invalid; operator intervention required");
+        if (restored > 0) {
+            Query restored_store(db, "SELECT store_path FROM generations WHERE id=? AND profile_id=?;");
+            restored_store.bind(1, restored); restored_store.bind(2, pid);
+            if (!restored_store.next() || restored_store.text(0) != audit.text(3))
+                throw std::runtime_error("transaction rollback target differs from history; operator intervention required");
+        }
+        json_object* items = required_field(parsed.get(), "selections", json_type_array);
+        Query selections(db, "SELECT p.attribute,r.revision,s.output_path FROM package_selections s JOIN packages p ON p.id=s.package_id JOIN repository_revisions r ON r.id=p.repository_revision_id WHERE s.generation_id=? ORDER BY p.attribute;");
+        selections.bind(1, audit.number(7));
+        size_t indexed = 0;
+        while (selections.next()) {
+            json_object* item = json_object_array_get_idx(items, indexed++);
+            if (!item || !json_object_is_type(item, json_type_object) ||
+                intent_text(item, "attribute") != selections.text(0) ||
+                intent_text(item, "revision") != selections.text(1) ||
+                intent_text(item, "output") != selections.text(2))
+                throw std::runtime_error("transaction selections differ from generation; operator intervention required");
+        }
+        size_t item_count = json_object_array_length(items);
+        if (item_count != indexed) {
+            bool empty_seed = indexed == 0 && item_count == 1 &&
+                intent_text(json_object_array_get_idx(items, 0), "attribute") == "__empty_profile_seed";
+            if (!empty_seed) throw std::runtime_error("transaction selection count differs from generation; operator intervention required");
+        }
         fs::path journal = directory_ / "journals" / (hash + ".json");
         if (fs::exists(journal) && read_journal(journal) != intent)
             throw std::runtime_error("transaction journal mismatch; operator intervention required");
@@ -263,15 +337,23 @@ void TransactionEngine::recover_locked() {
             if (audit.text(4).empty() || store_target(audit.text(4)) != audit.text(3))
                 throw std::runtime_error("retained generation GC root is missing; operator intervention required");
             verify_store(audit.text(3));
+            previous_hash = hash;
+            previous_generation = audit.number(7);
+        } else if (status != "not_applied") {
+            throw std::runtime_error("transaction status is unresolved; operator intervention required");
         }
     }
+    Query expected_count(db, "SELECT count(*) FROM transactions WHERE profile_id=?;");
+    expected_count.bind(1, pid); expected_count.next();
+    if (audited != expected_count.number(0))
+        throw std::runtime_error("transaction generation link is missing; operator intervention required");
 }
 
 std::string TransactionEngine::mutate(const std::string& operation, const std::vector<std::string>& names,
                                       bool yes, bool dry_run, bool offline) {
     if (offline && operation != "rollback") throw std::invalid_argument("offline profile mutation is not yet supported");
-    if (operation != "rollback" && names.empty()) throw std::invalid_argument("at least one package is required");
-    if (operation != "install" && operation != "remove" && operation != "rollback") throw std::invalid_argument("unsupported profile operation");
+    if (operation != "rollback" && operation != "upgrade" && names.empty()) throw std::invalid_argument("at least one package is required");
+    if (operation != "install" && operation != "remove" && operation != "upgrade" && operation != "rollback") throw std::invalid_argument("unsupported profile operation");
     if (operation == "rollback" && names.size() > 1) throw std::invalid_argument("rollback accepts at most one transaction ID");
     Lock lock(directory_ / "operation.lock");
     recover_locked();
@@ -308,15 +390,24 @@ std::string TransactionEngine::mutate(const std::string& operation, const std::v
         while (restored.next()) selections.push_back({restored.number(0), restored.text(1), restored.text(2), restored.text(3)});
         verify_store(restored_store);
     }
-    for (const std::string& name : (operation == "rollback" ? std::vector<std::string>{} : names)) {
+    std::vector<std::string> requested = names;
+    if (operation == "upgrade" && requested.empty()) {
+        for (const auto& s : selections) requested.push_back(s.attribute);
+        if (requested.empty()) throw std::runtime_error("no packages are installed in this ASTRA profile");
+    }
+    for (const std::string& name : (operation == "rollback" ? std::vector<std::string>{} : requested)) {
         if (name.empty() || name.size() > 256 || name[0] == '-') throw std::invalid_argument("invalid package identifier");
         auto found = std::find_if(selections.begin(), selections.end(), [&](const Selection& s) { return s.attribute == name || s.attribute.substr(s.attribute.rfind('.') + 1) == name; });
         if (operation == "install") {
-            PackageRecord p = repo_.info(name);
-            if (p.system != system) throw std::runtime_error("package is indexed for " + p.system + ", not this Nix host " + system);
+            PackageRecord p = repo_.info_for_system(name, system);
             Selection selected{package_id(db, p), p.attribute, p.revision, ""};
             if (found == selections.end()) selections.push_back(selected);
             else *found = selected;
+        } else if (operation == "upgrade") {
+            if (found == selections.end()) throw std::runtime_error("package is not installed in this ASTRA profile: " + name);
+            PackageRecord p = repo_.info_for_system(found->attribute, system);
+            if (p.revision != found->revision || p.attribute != found->attribute)
+                *found = Selection{package_id(db, p), p.attribute, p.revision, ""};
         } else {
             if (found == selections.end()) throw std::runtime_error("package is not installed in this ASTRA profile: " + name);
             selections.erase(found);
@@ -325,6 +416,13 @@ std::string TransactionEngine::mutate(const std::string& operation, const std::v
     std::sort(selections.begin(), selections.end(), [](const Selection& a, const Selection& b) { return a.attribute < b.attribute; });
     for (size_t i = 1; i < selections.size(); ++i)
         if (selections[i - 1].attribute == selections[i].attribute) throw std::runtime_error("duplicate package selection");
+    if (operation == "upgrade") {
+        std::vector<Selection> before = current_selections(db, pid);
+        bool changed = before.size() != selections.size();
+        for (size_t i = 0; !changed && i < before.size(); ++i)
+            changed = before[i].package_id != selections[i].package_id || before[i].revision != selections[i].revision;
+        if (!changed) throw std::runtime_error("selected packages already use the current repository revision");
+    }
     if (dry_run) {
         std::string plan = "Profile " + profile_ + " would contain:";
         for (const auto& s : selections) plan += "\n  " + s.attribute + " @ " + s.revision;
@@ -459,5 +557,40 @@ std::string TransactionEngine::history() const {
     std::string result;
     while (q.next()) result += display_id(db_.handle(), q.text(0)) + " " + q.text(1) + " seq=" + std::to_string(q.number(2)) + " " + q.text(3) + "\n";
     return result.empty() ? "No ASTRA transactions\n" : result;
+}
+std::string TransactionEngine::history_show(const std::string& identifier, bool json) const {
+    if (!std::regex_match(identifier, std::regex("[0-9a-f]{8,64}")))
+        throw std::invalid_argument("invalid transaction identifier");
+    sqlite3* db = db_.handle();
+    Query q(db, "SELECT t.sequence,t.hash,t.intent,t.status,coalesce(t.previous_generation,0),t.target_generation FROM transactions t JOIN profiles p ON p.id=t.profile_id WHERE p.name=? AND substr(t.hash,-length(?))=? LIMIT 2;");
+    q.bind(1, profile_); q.bind(2, identifier); q.bind(3, identifier);
+    if (!q.next()) throw std::runtime_error("transaction ID was not found in this ASTRA profile");
+    long long sequence = q.number(0), previous = q.number(4), target = q.number(5);
+    std::string hash = q.text(1), intent = q.text(2), status = q.text(3);
+    if (q.next()) throw std::runtime_error("transaction ID is ambiguous; supply a longer hash suffix");
+    Query events(db, "SELECT event,recorded_at FROM transaction_events WHERE transaction_sequence=? ORDER BY id;");
+    events.bind(1, sequence);
+    if (json) {
+        Json object(json_object_new_object(), json_object_put);
+        add(object.get(), "schema_version", 1LL); add(object.get(), "command", "history show");
+        add(object.get(), "hash", hash); add(object.get(), "id", display_id(db, hash));
+        add(object.get(), "status", status); add(object.get(), "sequence", sequence);
+        add(object.get(), "previous_generation", previous); add(object.get(), "target_generation", target);
+        json_object_object_add(object.get(), "intent", parse_intent(intent).release());
+        json_object* entries = json_object_new_array();
+        while (events.next()) {
+            json_object* entry = json_object_new_object();
+            add(entry, "event", events.text(0)); add(entry, "recorded_at", events.text(1));
+            json_object_array_add(entries, entry);
+        }
+        json_object_object_add(object.get(), "events", entries);
+        return std::string(json_object_to_json_string_ext(object.get(), JSON_C_TO_STRING_PLAIN)) + "\n";
+    }
+    std::string result = "Transaction: " + display_id(db, hash) + "\nFull hash: " + hash +
+                         "\nStatus: " + status + "\nSequence: " + std::to_string(sequence) +
+                         "\nPrevious generation: " + std::to_string(previous) +
+                         "\nTarget generation: " + std::to_string(target) + "\nIntent: " + intent + "\nEvents:\n";
+    while (events.next()) result += "  " + events.text(1) + " " + events.text(0) + "\n";
+    return result;
 }
 }

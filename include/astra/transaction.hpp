@@ -22,6 +22,7 @@ public:
     void recover();
     std::string list() const;
     std::string history() const;
+    std::string history_show(const std::string& identifier, bool json) const;
 private:
     void recover_locked();
     Database& db_;

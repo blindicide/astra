@@ -20,6 +20,7 @@ public:
     size_t update(bool offline);
     std::vector<PackageRecord> search(const std::string& query) const;
     PackageRecord info(const std::string& identifier) const;
+    PackageRecord info_for_system(const std::string& identifier, const std::string& system) const;
 private:
     Database& database_;
 };

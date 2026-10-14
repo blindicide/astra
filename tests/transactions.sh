@@ -37,6 +37,12 @@ grep -F hello "$TEST_DIR/rolled.list"
 if grep -F jq "$TEST_DIR/rolled.list"; then exit 1; fi
 first_hash=$(sqlite3 "$XDG_STATE_HOME/astra/state.db" 'SELECT hash FROM transactions WHERE sequence=1;')
 first_id=$(printf %s "$first_hash" | tail -c 9)
+"$ASTRA_BIN" history show "$first_id" > "$TEST_DIR/show.out"
+grep -F "Full hash: $first_hash" "$TEST_DIR/show.out"
+grep -F 'prepared' "$TEST_DIR/show.out"
+"$ASTRA_BIN" --json history show "$first_id" > "$TEST_DIR/show.json"
+python3 -m json.tool "$TEST_DIR/show.json" > /dev/null
+grep -F '"command":"history show"' "$TEST_DIR/show.json"
 "$ASTRA_BIN" --offline --yes rollback "$first_id" > "$TEST_DIR/rollback-explicit.out"
 grep -F 'committed' "$TEST_DIR/rollback-explicit.out"
 "$ASTRA_BIN" list | grep -F jq
@@ -52,3 +58,35 @@ grep -F 'transaction intent is immutable' "$TEST_DIR/immutable.out"
 "$ASTRA_BIN" --profile second list | grep -F jq
 "$ASTRA_BIN" list | grep -F hello
 test -f "$XDG_STATE_HOME/astra/state.db.backup-v1"
+mkdir -p "$TEST_DIR/next-fixture"
+sed 's/0123456789abcdef0123456789abcdef01234567/1111111111111111111111111111111111111111/g' tests/fixtures/nix-metadata.json > "$TEST_DIR/next-fixture/nix-metadata.json"
+sed 's/2.12.1/2.13.0/g; s/1.7.1/1.8.0/g' tests/fixtures/nix-search.json > "$TEST_DIR/next-fixture/nix-search.json"
+export ASTRA_FIXTURE_DIR="$TEST_DIR/next-fixture"
+"$ASTRA_BIN" repo update > "$TEST_DIR/update-next.out"
+"$ASTRA_BIN" --dry-run upgrade > "$TEST_DIR/upgrade.plan"
+grep -F '1111111111111111111111111111111111111111' "$TEST_DIR/upgrade.plan"
+"$ASTRA_BIN" --yes upgrade > "$TEST_DIR/upgrade.out"
+grep -F committed "$TEST_DIR/upgrade.out"
+"$ASTRA_BIN" list > "$TEST_DIR/upgraded.list"
+grep -F dddddddddddddddddddddddddddddddd "$TEST_DIR/upgraded.list"
+grep -F eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee "$TEST_DIR/upgraded.list"
+test "$(sqlite3 "$XDG_STATE_HOME/astra/state.db" "SELECT count(*) FROM transactions WHERE status='committed' AND intent LIKE '%\"operation\":\"upgrade\"%';")" = 1
+"$ASTRA_BIN" --yes upgrade > "$TEST_DIR/no-upgrade.out" 2>&1 && exit 1
+grep -F 'already use the current repository revision' "$TEST_DIR/no-upgrade.out"
+last_generation=$(sqlite3 "$XDG_STATE_HOME/astra/state.db" 'SELECT target_generation FROM transactions ORDER BY sequence DESC LIMIT 1;')
+last_selection=$(sqlite3 "$XDG_STATE_HOME/astra/state.db" "SELECT output_path FROM package_selections WHERE generation_id=$last_generation LIMIT 1;")
+sqlite3 "$XDG_STATE_HOME/astra/state.db" "UPDATE package_selections SET output_path='/nix/store/ffffffffffffffffffffffffffffffff-tampered' WHERE generation_id=$last_generation AND output_path='$last_selection';"
+"$ASTRA_BIN" history > "$TEST_DIR/tamper.out" 2>&1 && exit 1
+grep -F 'transaction selections differ from generation' "$TEST_DIR/tamper.out"
+sqlite3 "$XDG_STATE_HOME/astra/state.db" "UPDATE package_selections SET output_path='$last_selection' WHERE generation_id=$last_generation AND output_path='/nix/store/ffffffffffffffffffffffffffffffff-tampered';"
+last_sequence=$(sqlite3 "$XDG_STATE_HOME/astra/state.db" 'SELECT max(sequence) FROM transactions;')
+original_previous=$(sqlite3 "$XDG_STATE_HOME/astra/state.db" "SELECT previous_generation FROM transactions WHERE sequence=$last_sequence;")
+sqlite3 "$XDG_STATE_HOME/astra/state.db" "UPDATE transactions SET previous_generation=$last_generation WHERE sequence=$last_sequence;"
+"$ASTRA_BIN" history > "$TEST_DIR/tamper-chain.out" 2>&1 && exit 1
+grep -F 'transaction intent does not match its generation chain' "$TEST_DIR/tamper-chain.out"
+sqlite3 "$XDG_STATE_HOME/astra/state.db" "UPDATE transactions SET previous_generation=$original_previous WHERE sequence=$last_sequence;"
+sqlite3 "$XDG_STATE_HOME/astra/state.db" "UPDATE transactions SET target_generation=NULL WHERE sequence=$last_sequence;"
+"$ASTRA_BIN" history > "$TEST_DIR/tamper-link.out" 2>&1 && exit 1
+grep -F 'transaction generation link is missing' "$TEST_DIR/tamper-link.out"
+sqlite3 "$XDG_STATE_HOME/astra/state.db" "UPDATE transactions SET target_generation=$last_generation WHERE sequence=$last_sequence;"
+"$ASTRA_BIN" history > "$TEST_DIR/clean-history.out"

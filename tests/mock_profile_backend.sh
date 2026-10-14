@@ -13,6 +13,8 @@ case "${0##*/}" in
             'build --no-link')
                 if [ "${ASTRA_MOCK_FAIL_BUILD:-0}" = 1 ]; then echo 'mock build failure' >&2; exit 5; fi
                 case "$4" in
+                    *1111111111111111111111111111111111111111'#hello') echo '/nix/store/dddddddddddddddddddddddddddddddd-hello' ;;
+                    *1111111111111111111111111111111111111111'#jq') echo '/nix/store/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-jq' ;;
                     *'#hello') echo '/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-hello' ;;
                     *'#jq') echo '/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-jq' ;;
                     *'#emptyDirectory') echo '/nix/store/cccccccccccccccccccccccccccccccc-empty' ;;
