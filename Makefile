@@ -30,6 +30,7 @@ check: build/astra
 	sh tests/repository.sh ./build/astra
 	sh tests/transactions.sh ./build/astra
 	sh tests/fault_boundaries.sh ./build/astra
+	sh tests/bootstrap.sh
 
 install: build/astra
 	install -Dm755 build/astra $(DESTDIR)$(PREFIX)/bin/astra
