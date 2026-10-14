@@ -4,6 +4,8 @@ ASTRA calls Nix with explicit argument arrays and no shell. Candidate CLI versio
 
 `repo update` uses `nix flake metadata --json` and `nix search --json` with `nix-command flakes` experimental features. Nix's own store, evaluator, sandbox, daemon permissions, and signature/trust policy remain authoritative. ASTRA does not alter Nix cache trust settings.
 
+For profile changes, ASTRA normally uses `nix eval --raw` to identify an output and checks its local store closure before staging. `--allow-build` permits `nix build --no-link --print-out-paths`, which may substitute or compile locally. `--offline` passes Nix's offline switch to evaluation, preview, build, and profile construction. ASTRA has not yet implemented a cache-only substitution path or independent validation of the effective Nix trust configuration; do not interpret a fake-backend test as proof of signature enforcement.
+
 The development host has no `nix` executable. Tests use a disposable fake executable to exercise parsing and refusal behavior; those tests are not evidence of an operational Nix backend.
 
 The profile strategy follows documented Nix operations: [`nix profile install --profile`](https://nix.dev/manual/nix/2.18/command-ref/new-cli/nix3-profile-install.html) builds a complete staged user environment, [`nix-env --profile --set`](https://nix.dev/manual/nix/2.23/command-ref/nix-env/set) switches the visible managed profile, and [`nix-store --add-root --realise`](https://nix.dev/manual/nix/2.28/command-ref/nix-store/realise) protects retained store paths. The newer `nix profile` interface is documented as experimental. These references explain the intended mechanism; live compatibility and crash durability remain to be tested on a real Nix installation.

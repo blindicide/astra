@@ -18,7 +18,7 @@ class TransactionEngine {
 public:
     TransactionEngine(Database& db, RepositoryManager& repo, std::string profile);
     std::string mutate(const std::string& operation, const std::vector<std::string>& names,
-                       bool yes, bool dry_run, bool offline);
+                       bool yes, bool dry_run, bool offline, bool allow_build);
     void recover();
     std::string list() const;
     std::string history() const;

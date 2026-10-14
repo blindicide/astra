@@ -12,7 +12,13 @@ export PATH="$TEST_DIR/bin:$PATH"
 export XDG_STATE_HOME="$TEST_DIR/state"
 export ASTRA_FIXTURE_DIR=$(realpath tests/fixtures)
 "$ASTRA_BIN" repo update >/dev/null
-"$ASTRA_BIN" --yes install hello jq > "$TEST_DIR/install.out"
+ASTRA_MOCK_MISSING_STORE=1 "$ASTRA_BIN" --yes install hello > "$TEST_DIR/missing.out" 2>&1 && exit 1
+grep -F 'use --allow-build' "$TEST_DIR/missing.out"
+test "$(sqlite3 "$XDG_STATE_HOME/astra/state.db" "SELECT count(*) FROM transactions;")" = 0
+ASTRA_MOCK_FAIL_BUILD=1 "$ASTRA_BIN" --allow-build --yes install hello > "$TEST_DIR/failed-build.out" 2>&1 && exit 1
+grep -F 'Nix build or substitute' "$TEST_DIR/failed-build.out"
+test "$(sqlite3 "$XDG_STATE_HOME/astra/state.db" "SELECT count(*) FROM transactions;")" = 0
+ASTRA_MOCK_REQUIRE_OFFLINE=1 "$ASTRA_BIN" --offline --yes install hello jq > "$TEST_DIR/install.out"
 grep -F 'committed' "$TEST_DIR/install.out"
 "$ASTRA_BIN" list > "$TEST_DIR/list.out"
 grep -F 'hello' "$TEST_DIR/list.out"
@@ -121,3 +127,6 @@ sqlite3 "$XDG_STATE_HOME/astra/state.db" "UPDATE transactions SET target_generat
 sqlite3 "$XDG_STATE_HOME/astra/state.db" "DELETE FROM transaction_events WHERE transaction_sequence=$last_sequence AND event='recovered_committed';"
 "$ASTRA_BIN" history > "$TEST_DIR/tamper-events.out" 2>&1 && exit 1
 grep -F 'transaction outcome events are incomplete' "$TEST_DIR/tamper-events.out"
+"$ASTRA_BIN" --allow-build --yes --profile buildopt install hello > "$TEST_DIR/buildopt.out"
+grep -F committed "$TEST_DIR/buildopt.out"
+"$ASTRA_BIN" --profile buildopt list | grep -F hello

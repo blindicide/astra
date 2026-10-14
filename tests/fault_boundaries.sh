@@ -54,7 +54,11 @@ for failure in BUILD STAGE ROOT ACTIVATION; do
     export XDG_STATE_HOME="$TEST_DIR/fail_$failure"
     "$ASTRA_BIN" repo update >/dev/null
     "$ASTRA_BIN" --yes install hello >/dev/null
-    env "ASTRA_MOCK_FAIL_$failure=1" "$ASTRA_BIN" --yes install jq > "$TEST_DIR/fail_$failure.out" 2>&1 && exit 1
+    if [ "$failure" = BUILD ]; then
+        env "ASTRA_MOCK_FAIL_$failure=1" "$ASTRA_BIN" --allow-build --yes install jq > "$TEST_DIR/fail_$failure.out" 2>&1 && exit 1
+    else
+        env "ASTRA_MOCK_FAIL_$failure=1" "$ASTRA_BIN" --yes install jq > "$TEST_DIR/fail_$failure.out" 2>&1 && exit 1
+    fi
     "$ASTRA_BIN" history >/dev/null
     test "$(sqlite3 "$XDG_STATE_HOME/astra/state.db" "SELECT count(*) FROM transactions WHERE status='committed';")" -eq 1
 done

@@ -15,6 +15,7 @@
 #include <openssl/sha.h>
 #include <regex>
 #include <set>
+#include <sstream>
 #include <sqlite3.h>
 #include <stdexcept>
 #include <sys/file.h>
@@ -176,6 +177,36 @@ void checked_process(const std::vector<std::string>& args, int seconds = 600) {
 }
 void verify_store(const std::string& path) {
     checked_process({"nix-store", "--verify-path", path}, 30);
+}
+void verify_local_closure(const std::string& path) {
+    ProcessResult result = run_process({"nix-store", "--query", "--requisites", path}, 120, 8 * 1024 * 1024);
+    if (result.status != 0 || result.timed_out || result.truncated)
+        throw std::runtime_error("cannot inspect local Nix store closure: " + result.error.substr(0, 400));
+    std::istringstream paths(result.output);
+    std::string reference;
+    bool saw_target = false;
+    while (std::getline(paths, reference)) {
+        if (!std::regex_match(reference, std::regex(R"(/nix/store/[a-z0-9]{32}-[A-Za-z0-9+._?=-]+)")))
+            throw std::runtime_error("Nix returned an invalid closure path");
+        verify_store(reference);
+        saw_target = saw_target || reference == path;
+    }
+    if (!saw_target) throw std::runtime_error("Nix closure query omitted its target");
+}
+std::vector<std::string> nix_prefix(bool offline) {
+    std::vector<std::string> command{"nix"};
+    if (offline) command.push_back("--offline");
+    command.insert(command.end(), {"--extra-experimental-features", "nix-command flakes"});
+    return command;
+}
+std::string one_store_path(const ProcessResult& result, const std::string& action) {
+    if (result.status != 0 || result.timed_out || result.truncated)
+        throw std::runtime_error(action + " failed: " + result.error.substr(0, 400));
+    std::string path = result.output;
+    if (!path.empty() && path.back() == '\n') path.pop_back();
+    if (!std::regex_match(path, std::regex(R"(/nix/store/[a-z0-9]{32}-[A-Za-z0-9+._?=-]+)")))
+        throw std::runtime_error(action + " returned an invalid store path");
+    return path;
 }
 void fault(const char* boundary) {
     const char* requested = std::getenv("ASTRA_TEST_FAULT_POINT");
@@ -361,15 +392,16 @@ void TransactionEngine::recover_locked() {
 }
 
 std::string TransactionEngine::mutate(const std::string& operation, const std::vector<std::string>& names,
-                                      bool yes, bool dry_run, bool offline) {
-    if (offline && operation != "rollback") throw std::invalid_argument("offline profile mutation is not yet supported");
+                                      bool yes, bool dry_run, bool offline, bool allow_build) {
     if (operation != "rollback" && operation != "upgrade" && names.empty()) throw std::invalid_argument("at least one package is required");
     if (operation != "install" && operation != "remove" && operation != "upgrade" && operation != "rollback") throw std::invalid_argument("unsupported profile operation");
     if (operation == "rollback" && names.size() > 1) throw std::invalid_argument("rollback accepts at most one transaction ID");
     Lock lock(directory_ / "operation.lock");
     recover_locked();
     if (!detect_backend().version_supported) throw std::runtime_error("a supported Nix backend is required for profile changes");
-    ProcessResult system_result = run_process({"nix", "--extra-experimental-features", "nix-command flakes", "eval", "--raw", "--impure", "--expr", "builtins.currentSystem"}, 30);
+    auto system_command = nix_prefix(offline);
+    system_command.insert(system_command.end(), {"eval", "--raw", "--impure", "--expr", "builtins.currentSystem"});
+    ProcessResult system_result = run_process(system_command, 30);
     if (system_result.status != 0 || system_result.timed_out || system_result.truncated)
         throw std::runtime_error("cannot determine Nix host system");
     std::string system = system_result.output;
@@ -439,18 +471,20 @@ std::string TransactionEngine::mutate(const std::string& operation, const std::v
         for (const auto& s : selections) plan += "\n  " + s.attribute + " @ " + s.revision;
         return plan + "\nNo package was built or activated.";
     }
-    std::vector<std::string> preview{"nix", "--extra-experimental-features", "nix-command flakes", "build", "--dry-run", "--no-link"};
+    std::vector<std::string> preview = nix_prefix(offline);
+    preview.insert(preview.end(), {"build", "--dry-run", "--no-link"});
     for (const auto& s : selections) if (s.output.empty())
         preview.push_back("github:NixOS/nixpkgs/" + s.revision + "#" + s.attribute.substr(s.attribute.rfind('.') + 1));
     if (selections.empty() && operation != "rollback") preview.push_back("github:NixOS/nixpkgs/" + selected_revision + "#emptyDirectory");
-    if (preview.size() > 6) {
+    if (preview.size() > (offline ? 7U : 6U)) {
         ProcessResult preflight = run_process(preview, 120, 4 * 1024 * 1024);
         if (preflight.status != 0 || preflight.timed_out || preflight.truncated)
             throw std::runtime_error("Nix build preview failed: " + preflight.error.substr(0, 400));
         std::cout << "Nix build preview:\n" << preflight.output << preflight.error;
     }
     std::cout << "Profile " << profile_ << " will contain " << selections.size()
-              << " package(s). Nix may fetch substitutes or build locally.\n";
+              << " package(s). " << (allow_build ? "Nix may fetch substitutes or compile locally."
+                                              : "Missing package outputs will be refused; use --allow-build to permit source builds.") << "\n";
     if (!yes) {
         if (!isatty(STDIN_FILENO)) throw std::runtime_error("confirmation required; pass --yes after reviewing the plan");
         std::cout << "Proceed? [y/N] " << std::flush;
@@ -461,21 +495,27 @@ std::string TransactionEngine::mutate(const std::string& operation, const std::v
     std::string revision = selected_revision;
     if (revision.empty()) throw std::runtime_error("repository revision is not selected");
     if (repo_.selected_revision() != revision) throw std::runtime_error("repository revision changed during profile planning; retry");
-    if (selections.empty() && operation != "rollback") {
-        ProcessResult empty = run_process({"nix", "--extra-experimental-features", "nix-command flakes", "build", "--no-link", "--print-out-paths", "github:NixOS/nixpkgs/" + revision + "#emptyDirectory"}, 600);
-        if (empty.status != 0 || empty.timed_out || empty.truncated) throw std::runtime_error("cannot build empty profile seed");
-        std::string path = empty.output;
-        if (!path.empty() && path.back() == '\n') path.pop_back();
-        selections.push_back({0, "__empty_profile_seed", revision, path});
-    } else if (operation != "rollback") {
+    if (selections.empty() && operation != "rollback")
+        selections.push_back({0, "__empty_profile_seed", revision, ""});
+    if (operation != "rollback") {
         for (auto& s : selections) {
             if (!s.output.empty()) continue;
-            std::string attr = s.attribute.substr(s.attribute.rfind('.') + 1);
-            ProcessResult built = run_process({"nix", "--extra-experimental-features", "nix-command flakes", "build", "--no-link", "--print-out-paths", "github:NixOS/nixpkgs/" + s.revision + "#" + attr}, 3600);
-            if (built.status != 0 || built.timed_out || built.truncated) throw std::runtime_error("Nix build or substitute failed for " + s.attribute + ": " + built.error.substr(0, 400));
-            s.output = built.output;
-            if (!s.output.empty() && s.output.back() == '\n') s.output.pop_back();
-            if (!std::regex_match(s.output, std::regex(R"(/nix/store/[a-z0-9]{32}-[A-Za-z0-9+._?=-]+)"))) throw std::runtime_error("Nix returned an invalid package output path");
+            const std::string installable = "github:NixOS/nixpkgs/" + s.revision + "#" + s.attribute.substr(s.attribute.rfind('.') + 1);
+            auto command = nix_prefix(offline);
+            if (allow_build) {
+                command.insert(command.end(), {"build", "--no-link", "--print-out-paths", installable});
+                s.output = one_store_path(run_process(command, 3600), "Nix build or substitute for " + s.attribute);
+            } else {
+                command.insert(command.end(), {"eval", "--raw", installable});
+                s.output = one_store_path(run_process(command, 120), "Nix evaluation for " + s.attribute);
+            }
+        }
+    }
+    for (const auto& s : selections) {
+        try { verify_local_closure(s.output); }
+        catch (const std::exception& error) {
+            throw std::runtime_error("package output is unavailable in the local Nix store for " + s.attribute +
+                                     (allow_build ? ": " : "; review the plan and use --allow-build if source compilation is acceptable: ") + error.what());
         }
     }
     fault("after_build");
@@ -484,7 +524,8 @@ std::string TransactionEngine::mutate(const std::string& operation, const std::v
     std::string target = restored_store;
     if (operation != "rollback") {
         fs::path stage = directory_ / "staged" / transaction_nonce;
-        std::vector<std::string> install{"nix", "--extra-experimental-features", "nix-command flakes", "profile", "install", "--profile", stage.string()};
+        std::vector<std::string> install = nix_prefix(offline);
+        install.insert(install.end(), {"profile", "install", "--profile", stage.string()});
         for (const auto& s : selections) install.push_back(s.output);
         checked_process(install);
         target = store_target(stage);

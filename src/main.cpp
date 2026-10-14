@@ -21,7 +21,7 @@ std::string json_escape(const std::string& value) {
 }
 void help() {
     std::cout << "ASTRA 0.3.0-dev — nixpkgs-backed application manager (development)\n"
-              << "Usage: astra [--json] [--offline] [--profile NAME] [--yes] [--dry-run] <command>\n"
+              << "Usage: astra [--json] [--offline] [--profile NAME] [--yes] [--dry-run] [--allow-build] <command>\n"
               << "Commands: help, doctor, verify, repo list, repo update, update, search, info,\n"
               << "          list, install, remove, upgrade, history, rollback\n"
               << "          why\n"
@@ -30,7 +30,7 @@ void help() {
 }
 int main(int argc, char** argv) {
     try {
-        bool json = false, offline = false, yes = false, dry_run = false;
+        bool json = false, offline = false, yes = false, dry_run = false, allow_build = false;
         std::string profile = "default";
         std::vector<std::string> args;
         for (int i = 1; i < argc; ++i) {
@@ -39,11 +39,14 @@ int main(int argc, char** argv) {
             else if (arg == "--offline") offline = true;
             else if (arg == "--yes") yes = true;
             else if (arg == "--dry-run") dry_run = true;
+            else if (arg == "--allow-build") allow_build = true;
             else if (arg == "--profile") { if (++i >= argc) throw std::invalid_argument("--profile needs a name"); profile = argv[i]; }
             else args.push_back(arg);
         }
         if ((yes || dry_run || profile != "default") && (args.empty() || (args[0] != "install" && args[0] != "remove" && args[0] != "upgrade" && args[0] != "list" && args[0] != "why" && args[0] != "history" && args[0] != "rollback" && args[0] != "clean" && args[0] != "repair")))
             throw std::invalid_argument("profile switches are only meaningful for profile commands");
+        if (allow_build && (args.empty() || (args[0] != "install" && args[0] != "remove" && args[0] != "upgrade")))
+            throw std::invalid_argument("--allow-build is only meaningful for install, remove, or upgrade");
         if (args.empty() || (args.size() == 1 && (args[0] == "help" || args[0] == "--help"))) {
             if (json) throw std::invalid_argument("--json is not supported for help");
             help(); return 0;
@@ -105,12 +108,12 @@ int main(int argc, char** argv) {
                 engine.recover(); std::cout << engine.history_show(args[2], json); return 0;
             }
             if (args[0] == "rollback" && args.size() <= 2) {
-                std::string result = engine.mutate("rollback", std::vector<std::string>(args.begin() + 1, args.end()), yes, dry_run, offline);
+                std::string result = engine.mutate("rollback", std::vector<std::string>(args.begin() + 1, args.end()), yes, dry_run, offline, allow_build);
                 std::cout << (dry_run ? result : "Transaction " + result + " committed") << '\n';
                 return 0;
             }
             if (((args[0] == "install" || args[0] == "remove") && args.size() > 1) || args[0] == "upgrade") {
-                std::string result = engine.mutate(args[0], std::vector<std::string>(args.begin() + 1, args.end()), yes, dry_run, offline);
+                std::string result = engine.mutate(args[0], std::vector<std::string>(args.begin() + 1, args.end()), yes, dry_run, offline, allow_build);
                 std::cout << (dry_run ? result : "Transaction " + result + " committed") << '\n';
                 return 0;
             }
