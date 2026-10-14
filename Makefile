@@ -10,7 +10,7 @@ LDLIBS := -ldl -lpthread -ljson-c -lcrypto
 CPP_SOURCES := $(wildcard src/*.cpp)
 CPP_OBJECTS := $(patsubst src/%.cpp,build/%.o,$(CPP_SOURCES))
 
-.PHONY: all check install clean
+.PHONY: all check check-sanitizers install clean
 all: build/astra
 
 build/astra: $(CPP_OBJECTS) build/sqlite3.o
@@ -32,6 +32,9 @@ check: build/astra
 	sh tests/transactions.sh ./build/astra
 	sh tests/fault_boundaries.sh ./build/astra
 	sh tests/bootstrap.sh
+
+check-sanitizers:
+	sh scripts/check-sanitizers.sh
 
 install: build/astra
 	install -Dm755 build/astra $(DESTDIR)$(PREFIX)/bin/astra

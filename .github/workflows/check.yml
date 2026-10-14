@@ -17,6 +17,8 @@ jobs:
         run: |
           make -j2
           make check
+      - name: Address and undefined behavior sanitizers
+        run: make check-sanitizers
       - name: Package and test source candidate
         run: |
           mkdir -p "$RUNNER_TEMP/astra-artifacts"
