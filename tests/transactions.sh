@@ -11,11 +11,12 @@ ln -s nix "$TEST_DIR/bin/nix-env"
 export PATH="$TEST_DIR/bin:$PATH"
 export XDG_STATE_HOME="$TEST_DIR/state"
 export ASTRA_FIXTURE_DIR=$(realpath tests/fixtures)
+export ASTRA_MOCK_CONFIG_FILE=$(realpath tests/fixtures/nix-config.json)
 "$ASTRA_BIN" repo update >/dev/null
 ASTRA_MOCK_MISSING_STORE=1 "$ASTRA_BIN" --yes install hello > "$TEST_DIR/missing.out" 2>&1 && exit 1
 grep -F 'use --allow-build' "$TEST_DIR/missing.out"
 test "$(sqlite3 "$XDG_STATE_HOME/astra/state.db" "SELECT count(*) FROM transactions;")" = 0
-ASTRA_MOCK_FAIL_BUILD=1 "$ASTRA_BIN" --allow-build --yes install hello > "$TEST_DIR/failed-build.out" 2>&1 && exit 1
+ASTRA_MOCK_MISSING_STORE=1 ASTRA_MOCK_FAIL_BUILD=1 "$ASTRA_BIN" --allow-build --yes install hello > "$TEST_DIR/failed-build.out" 2>&1 && exit 1
 grep -F 'Nix build or substitute' "$TEST_DIR/failed-build.out"
 test "$(sqlite3 "$XDG_STATE_HOME/astra/state.db" "SELECT count(*) FROM transactions;")" = 0
 ASTRA_MOCK_REQUIRE_OFFLINE=1 "$ASTRA_BIN" --offline --yes install hello jq > "$TEST_DIR/install.out"
@@ -143,3 +144,24 @@ grep -F 'transaction outcome events are incomplete' "$TEST_DIR/tamper-events.out
 "$ASTRA_BIN" --allow-build --yes --profile buildopt install hello > "$TEST_DIR/buildopt.out"
 grep -F committed "$TEST_DIR/buildopt.out"
 "$ASTRA_BIN" --profile buildopt list | grep -F hello
+export XDG_STATE_HOME="$TEST_DIR/cache-state"
+mkdir -p "$TEST_DIR/copied"
+export ASTRA_MOCK_COPIED_DIR="$TEST_DIR/copied"
+ASTRA_FIXTURE_DIR=$(realpath tests/fixtures) "$ASTRA_BIN" repo update > /dev/null
+ASTRA_MOCK_MISSING_STORE=1 ASTRA_MOCK_CACHE_AVAILABLE=1 ASTRA_MOCK_FAIL_CACHE_TOUCH=1 \
+    "$ASTRA_BIN" --offline --yes install hello > "$TEST_DIR/offline-cache.out" 2>&1 && exit 1
+grep -F 'use --allow-build' "$TEST_DIR/offline-cache.out"
+test "$(sqlite3 "$XDG_STATE_HOME/astra/state.db" 'SELECT count(*) FROM transactions;')" = 0
+ASTRA_MOCK_MISSING_STORE=1 ASTRA_MOCK_CACHE_AVAILABLE=1 ASTRA_MOCK_BAD_SIGNATURE=1 ASTRA_MOCK_FAIL_BUILD=1 \
+    "$ASTRA_BIN" --allow-build --yes install hello > "$TEST_DIR/bad-signature.out" 2>&1 && exit 1
+grep -F 'signature rejected' "$TEST_DIR/bad-signature.out"
+test "$(sqlite3 "$XDG_STATE_HOME/astra/state.db" 'SELECT count(*) FROM transactions;')" = 0
+ASTRA_MOCK_MISSING_STORE=1 ASTRA_MOCK_CACHE_AVAILABLE=1 ASTRA_MOCK_FAIL_BUILD=1 \
+    "$ASTRA_BIN" --yes install hello > "$TEST_DIR/cache-only.out"
+grep -F committed "$TEST_DIR/cache-only.out"
+test -f "$TEST_DIR/copied/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-hello"
+test "$(sqlite3 "$XDG_STATE_HOME/astra/state.db" "SELECT count(*) FROM transactions WHERE status='committed';")" = 1
+export XDG_STATE_HOME="$TEST_DIR/build-state"
+ASTRA_FIXTURE_DIR=$(realpath tests/fixtures) "$ASTRA_BIN" repo update > /dev/null
+ASTRA_MOCK_MISSING_STORE=1 ASTRA_MOCK_CACHE_AVAILABLE=0 "$ASTRA_BIN" --allow-build --yes install hello > "$TEST_DIR/consented-build.out"
+grep -F committed "$TEST_DIR/consented-build.out"

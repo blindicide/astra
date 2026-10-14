@@ -9,4 +9,5 @@ struct BackendStatus {
     std::string detail;
 };
 BackendStatus detect_backend();
+void require_trusted_cache_policy(const BackendStatus& backend);
 }

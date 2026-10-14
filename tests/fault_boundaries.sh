@@ -65,7 +65,7 @@ for failure in BUILD STAGE ROOT ACTIVATION; do
     "$ASTRA_BIN" repo update >/dev/null
     "$ASTRA_BIN" --yes install hello >/dev/null
     if [ "$failure" = BUILD ]; then
-        env "ASTRA_MOCK_FAIL_$failure=1" "$ASTRA_BIN" --allow-build --yes install jq > "$TEST_DIR/fail_$failure.out" 2>&1 && exit 1
+        env ASTRA_MOCK_MISSING_STORE=1 "ASTRA_MOCK_FAIL_$failure=1" "$ASTRA_BIN" --allow-build --yes install jq > "$TEST_DIR/fail_$failure.out" 2>&1 && exit 1
     else
         env "ASTRA_MOCK_FAIL_$failure=1" "$ASTRA_BIN" --yes install jq > "$TEST_DIR/fail_$failure.out" 2>&1 && exit 1
     fi

@@ -29,3 +29,15 @@ export ASTRA_MOCK_FAIL_METADATA=1
 grep -F 'unexpected repository identity' "$TEST_DIR/failure.out"
 "$ASTRA_BIN" --json repo list | grep -F '0123456789abcdef0123456789abcdef01234567'
 test "$(sqlite3 "$XDG_STATE_HOME/astra/state.db" 'select count(*) from packages;')" = 2
+unset ASTRA_MOCK_FAIL_METADATA
+for fault in unsigned key substituter malformed; do
+    case "$fault" in
+        unsigned) sed 's/"true"/"false"/' tests/fixtures/nix-config.json > "$TEST_DIR/config.json" ;;
+        key) sed 's/cache.nixos.org-1:/attacker-1:/' tests/fixtures/nix-config.json > "$TEST_DIR/config.json" ;;
+        substituter) sed 's@https://cache.nixos.org/@https://attacker.example/@' tests/fixtures/nix-config.json > "$TEST_DIR/config.json" ;;
+        malformed) printf '%s\n' '{broken' > "$TEST_DIR/config.json" ;;
+    esac
+    ASTRA_MOCK_CONFIG_FILE="$TEST_DIR/config.json" "$ASTRA_BIN" update > "$TEST_DIR/$fault.out" 2>&1 && exit 1
+    grep -E 'cache trust|cache policy' "$TEST_DIR/$fault.out"
+    test "$(sqlite3 "$XDG_STATE_HOME/astra/state.db" 'select count(*) from packages;')" = 2
+done

@@ -80,7 +80,11 @@ size_t RepositoryManager::update(bool offline) {
     if (offline) throw std::runtime_error("repository update needs network access and is unavailable with --offline");
     BackendStatus backend = detect_backend();
     if (!backend.version_supported) throw std::runtime_error("supported Nix backend required: " + backend.detail);
-    const std::vector<std::string> base{"nix", "--extra-experimental-features", "nix-command flakes"};
+    require_trusted_cache_policy(backend);
+    const std::vector<std::string> base{"nix", "--extra-experimental-features", "nix-command flakes",
+        "--option", "require-sigs", "true",
+        "--option", "trusted-public-keys", "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=",
+        "--option", "substituters", "https://cache.nixos.org/"};
     auto metadata_args = base;
     metadata_args.insert(metadata_args.end(), {"flake", "metadata", "--json", source_ref});
     ProcessResult metadata = run_process(metadata_args, 120, 4 * 1024 * 1024);

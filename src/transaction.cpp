@@ -214,8 +214,23 @@ void verify_local_closure(const std::string& path) {
 std::vector<std::string> nix_prefix(bool offline) {
     std::vector<std::string> command{"nix"};
     if (offline) command.push_back("--offline");
-    command.insert(command.end(), {"--extra-experimental-features", "nix-command flakes"});
+    command.insert(command.end(), {"--extra-experimental-features", "nix-command flakes",
+                                   "--option", "require-sigs", "true",
+                                   "--option", "trusted-public-keys", "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=",
+                                   "--option", "substituters", "https://cache.nixos.org/"});
     return command;
+}
+bool copy_approved_substitute(const std::string& path) {
+    auto probe = nix_prefix(false);
+    probe.insert(probe.end(), {"path-info", "--store", "https://cache.nixos.org/", path});
+    ProcessResult available = run_process(probe, 60, 1024 * 1024);
+    if (available.timed_out || available.truncated)
+        throw std::runtime_error("approved binary cache availability check failed");
+    if (available.status != 0) return false;
+    auto copy = nix_prefix(false);
+    copy.insert(copy.end(), {"copy", "--from", "https://cache.nixos.org/", path});
+    checked_process(copy, 600);
+    return true;
 }
 std::string one_store_path(const ProcessResult& result, const std::string& action) {
     if (result.status != 0 || result.timed_out || result.truncated)
@@ -428,7 +443,9 @@ std::string TransactionEngine::mutate(const std::string& operation, const std::v
     if (operation == "rollback" && names.size() > 1) throw std::invalid_argument("rollback accepts at most one transaction ID");
     Lock lock(directory_ / "operation.lock");
     recover_locked();
-    if (!detect_backend().version_supported) throw std::runtime_error("a supported Nix backend is required for profile changes");
+    BackendStatus backend = detect_backend();
+    if (!backend.version_supported) throw std::runtime_error("a supported Nix backend is required for profile changes");
+    require_trusted_cache_policy(backend);
     auto system_command = nix_prefix(offline);
     system_command.insert(system_command.end(), {"eval", "--raw", "--impure", "--expr", "builtins.currentSystem"});
     ProcessResult system_result = run_process(system_command, 30);
@@ -532,12 +549,17 @@ std::string TransactionEngine::mutate(const std::string& operation, const std::v
             if (!s.output.empty()) continue;
             const std::string installable = "github:NixOS/nixpkgs/" + s.revision + "#" + s.attribute.substr(s.attribute.rfind('.') + 1);
             auto command = nix_prefix(offline);
-            if (allow_build) {
+            command.insert(command.end(), {"eval", "--raw", installable});
+            s.output = one_store_path(run_process(command, 120), "Nix evaluation for " + s.attribute);
+            bool local = true;
+            try { verify_local_closure(s.output); }
+            catch (const std::exception&) { local = false; }
+            if (!local && !offline && copy_approved_substitute(s.output)) verify_local_closure(s.output);
+            else if (!local && allow_build) {
+                command = nix_prefix(offline);
                 command.insert(command.end(), {"build", "--no-link", "--print-out-paths", installable});
-                s.output = one_store_path(run_process(command, 3600), "Nix build or substitute for " + s.attribute);
-            } else {
-                command.insert(command.end(), {"eval", "--raw", installable});
-                s.output = one_store_path(run_process(command, 120), "Nix evaluation for " + s.attribute);
+                std::string built = one_store_path(run_process(command, 3600), "Nix build or substitute for " + s.attribute);
+                if (built != s.output) throw std::runtime_error("Nix build result differs from the evaluated package output");
             }
         }
     }
