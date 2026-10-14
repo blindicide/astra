@@ -18,19 +18,19 @@ This ledger tracks evidence, not release claims. A checked item requires a real 
 
 | # | Acceptance gate | Evidence status |
 | --- | --- | --- |
-| 1 | Offline source archive builds on conventional Linux | Candidate archive script added; independent clean-archive gate pending rerun |
-| 2 | Mandatory automated tests pass | Pending |
+| 1 | Offline source archive builds on conventional Linux | Candidate archive independently built, checked, and staged without build-time downloads on a conventional host; network isolation not tested |
+| 2 | Mandatory automated tests pass | Local normal and ASan/UBSan suites pass; live Nix categories remain untested |
 | 3 | Supported Nix backend operational and detected | Unverified; no Nix installed |
 | 4 | Search and package metadata work | Fake-backend tests pass; live Nix unverified |
 | 5 | Multi-package atomic profile transaction | Fake-backend test passes; live Nix unverified |
 | 6 | Removal and upgrade work | Removal and upgrade fake-backend tests pass; live Nix unverified |
 | 7 | Immutable transaction hash and audit trail | Local hash/journal, history inspection, chain/selection audit, and SQLite trigger tests pass; live durability unverified |
 | 8 | Rollback restores managed profile | Fake-backend test passes; live Nix unverified |
-| 9 | Power-loss fault injection reconciles every state | Fourteen boundary tests pass; full-disk, permission, live power loss pending |
+| 9 | Power-loss fault injection reconciles every state | Fourteen boundary tests, simulated full-disk journal write/sync failures, and permission refusal pass; live power loss pending |
 | 10 | GC protects active and rollback generations | Root registration mocked and audited; live Nix GC unverified |
 | 11 | Untrusted cache outputs rejected | Mock policy and signature rejection pass; live Nix signature enforcement unverified |
 | 12 | Native Almagest-G build passes | Unverified; no target |
 | 13 | Almagest-G Nix bootstrap validated | Unverified; no target |
 | 14 | Almagest-G operation preserves protected OS components | Unverified; no target |
-| 15 | Documentation matches implementation | Required draft files added; implementation cross-check and target runbooks pending |
+| 15 | Documentation matches implementation | Required files and command/JSON reference cover local behavior; target instructions remain unvalidated |
 | 16 | Verified source/bootstrap GitHub release assets | Pending; publication prohibited until all gates pass |
