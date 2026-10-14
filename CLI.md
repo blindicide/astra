@@ -30,7 +30,7 @@ line with integer `schema_version: 1`:
 | `doctor` | `command`, `database`, `profiles_verified`, `backend`, `runtime`, `cache_policy`, `daemon`, `cache` |
 | `verify` | `command`, `database`, `profiles_verified`, `backend` |
 | `repo list` | `command`, `repositories` |
-| `repo update`, `update` | `command`, `revision`, `indexed_packages`, `profiles_changed` |
+| `repo update`, `update` | `command`, `revision`, `nar_hash`, `indexed_packages`, `profiles_changed` |
 | `search QUERY` | `command`, `packages` |
 | `info PACKAGE` | `command`, `package` |
 | `history show ID` | `command`, `hash`, `id`, `status`, `sequence`, `previous_generation`, `target_generation`, `intent`, `events` |
@@ -41,7 +41,9 @@ line with integer `schema_version: 1`:
 cache detail is `skipped offline`; its `reachable` value is false because no
 probe was made. Package availability is `unverified` until a supported Nix
 operation confirms it. The selected repository revision is a 40-character
-immutable Git revision. `profiles_changed` is false on metadata updates.
+immutable Git revision. Repository list entries and update results include
+the locked `nar_hash`; a migrated historical revision can have an empty hash
+until it is fetched again. `profiles_changed` is false on metadata updates.
 
 Other profile commands currently reject `--json` explicitly. Human-facing
 output and errors are not a machine-readable interface. This development

@@ -19,7 +19,7 @@ static void sync_directory(const fs::path& directory) {
     close(fd);
 }
 
-static void verify_migration_backup(const fs::path& backup) {
+static void verify_migration_backup(const fs::path& backup, int expected_version) {
     sqlite3* source = nullptr;
     if (sqlite3_open_v2(backup.c_str(), &source, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOFOLLOW, nullptr) != SQLITE_OK) {
         if (source) sqlite3_close(source);
@@ -32,10 +32,48 @@ static void verify_migration_backup(const fs::path& backup) {
     sqlite3_finalize(check);
     check = nullptr;
     valid = valid && sqlite3_prepare_v2(source, "SELECT max(version) FROM schema_versions;", -1, &check, nullptr) == SQLITE_OK &&
-            sqlite3_step(check) == SQLITE_ROW && sqlite3_column_int(check, 0) == 1;
+            sqlite3_step(check) == SQLITE_ROW && sqlite3_column_int(check, 0) == expected_version;
     sqlite3_finalize(check);
     sqlite3_close(source);
     if (!valid) throw std::runtime_error("database migration backup is incomplete or corrupt; operator intervention required");
+}
+
+static void backup_before_migration(const fs::path& path, sqlite3* db, int version) {
+    fs::path backup = path;
+    backup += ".backup-v" + std::to_string(version);
+    struct stat entry{};
+    bool exists = false;
+    if (lstat(backup.c_str(), &entry) == 0) {
+        if (!S_ISREG(entry.st_mode) || entry.st_uid != geteuid() || (entry.st_mode & 0077))
+            throw std::runtime_error("ASTRA migration backup path is unsafe");
+        exists = true;
+    } else if (errno != ENOENT) throw std::runtime_error("cannot inspect database migration backup");
+    if (!exists) {
+        int fd = open(backup.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
+        if (fd < 0) throw std::runtime_error("cannot create database migration backup securely");
+        close(fd);
+        sqlite3* destination = nullptr;
+        if (sqlite3_open_v2(backup.c_str(), &destination, SQLITE_OPEN_READWRITE | SQLITE_OPEN_NOFOLLOW, nullptr) != SQLITE_OK) {
+            if (destination) sqlite3_close(destination);
+            throw std::runtime_error("cannot open database migration backup");
+        }
+        sqlite3_backup* copy = sqlite3_backup_init(destination, "main", db, "main");
+        if (!copy || sqlite3_backup_step(copy, -1) != SQLITE_DONE) {
+            if (copy) sqlite3_backup_finish(copy);
+            sqlite3_close(destination);
+            throw std::runtime_error("cannot back up database before migration");
+        }
+        sqlite3_backup_finish(copy);
+        sqlite3_close(destination);
+        fd = open(backup.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+        if (fd < 0 || fsync(fd) != 0) {
+            if (fd >= 0) close(fd);
+            throw std::runtime_error("cannot synchronize database migration backup");
+        }
+        close(fd);
+        sync_directory(backup.parent_path());
+    }
+    verify_migration_backup(backup, version);
 }
 
 static fs::path checked_base() {
@@ -91,7 +129,7 @@ Database::Database(const fs::path& path) : path_(path) {
             int result = sqlite3_step(check);
             int version = result == SQLITE_ROW ? sqlite3_column_int(check, 0) : 0;
             sqlite3_finalize(check);
-            if (version > 2) throw std::runtime_error("ASTRA database schema is newer than this executable");
+            if (version > 3) throw std::runtime_error("ASTRA database schema is newer than this executable");
         } else if (check) sqlite3_finalize(check);
     }
     exec("BEGIN IMMEDIATE;");
@@ -111,47 +149,23 @@ Database::Database(const fs::path& path) : path_(path) {
         exec("COMMIT;");
     } catch (...) { sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr); throw; }
     if (schema_version() == 1) {
-        fs::path backup = path;
-        backup += ".backup-v1";
-        struct stat backup_entry{};
-        bool existing_backup = false;
-        if (lstat(backup.c_str(), &backup_entry) == 0) {
-            if (!S_ISREG(backup_entry.st_mode) || backup_entry.st_uid != geteuid() || (backup_entry.st_mode & 0077))
-                throw std::runtime_error("ASTRA migration backup path is unsafe");
-            existing_backup = true;
-        } else if (errno != ENOENT) throw std::runtime_error("cannot inspect database migration backup");
-        if (!existing_backup) {
-            int fd = open(backup.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
-            if (fd < 0) throw std::runtime_error("cannot create database migration backup securely");
-            close(fd);
-            sqlite3* destination = nullptr;
-            if (sqlite3_open_v2(backup.c_str(), &destination, SQLITE_OPEN_READWRITE | SQLITE_OPEN_NOFOLLOW, nullptr) != SQLITE_OK) {
-                if (destination) sqlite3_close(destination);
-                throw std::runtime_error("cannot open database migration backup");
-            }
-            sqlite3_backup* copy = sqlite3_backup_init(destination, "main", db_, "main");
-            if (!copy || sqlite3_backup_step(copy, -1) != SQLITE_DONE) {
-                if (copy) sqlite3_backup_finish(copy);
-                sqlite3_close(destination);
-                throw std::runtime_error("cannot back up database before migration");
-            }
-            sqlite3_backup_finish(copy);
-            sqlite3_close(destination);
-            fd = open(backup.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-            if (fd < 0 || fsync(fd) != 0) {
-                if (fd >= 0) close(fd);
-                throw std::runtime_error("cannot synchronize database migration backup");
-            }
-            close(fd);
-            sync_directory(backup.parent_path());
-        }
-        verify_migration_backup(backup);
+        backup_before_migration(path, db_, 1);
         exec("BEGIN IMMEDIATE;");
         try {
             exec("CREATE TRIGGER immutable_transaction_intent BEFORE UPDATE OF hash,intent,sequence,profile_id ON transactions BEGIN SELECT RAISE(ABORT,'transaction intent is immutable'); END;");
             exec("CREATE TRIGGER immutable_transaction_delete BEFORE DELETE ON transactions BEGIN SELECT RAISE(ABORT,'transaction history is immutable'); END;");
             exec("CREATE UNIQUE INDEX one_active_generation ON generations(profile_id) WHERE active=1;");
             exec("INSERT INTO schema_versions(version) VALUES(2);");
+            exec("COMMIT;");
+        } catch (...) { sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr); throw; }
+    }
+    if (schema_version() == 2) {
+        backup_before_migration(path, db_, 2);
+        exec("BEGIN IMMEDIATE;");
+        try {
+            exec("ALTER TABLE repository_revisions ADD COLUMN nar_hash TEXT;");
+            exec("CREATE TRIGGER immutable_revision_hash BEFORE UPDATE OF nar_hash ON repository_revisions WHEN old.nar_hash IS NOT NULL AND new.nar_hash IS NOT old.nar_hash BEGIN SELECT RAISE(ABORT,'repository content hash is immutable'); END;");
+            exec("INSERT INTO schema_versions(version) VALUES(3);");
             exec("COMMIT;");
         } catch (...) { sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr); throw; }
     }

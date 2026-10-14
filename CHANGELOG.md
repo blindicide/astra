@@ -6,6 +6,7 @@
 - Add SHA-256 canonical transaction intents, private durable journals, profile locks, retained generation roots, and reconciliation around activation.
 - Add SQLite schema migration backup, immutable intent triggers, deterministic fake-backend integration tests, and twelve crash-boundary tests.
 - Add pinned-revision upgrades, detailed history inspection, and audit checks against the recorded generation chain and package selections.
+- Retain the locked nixpkgs NAR hash with each revision and reject conflicting metadata for an existing revision.
 - Live Nix and Almagest-G validation remain outstanding.
 
 ## 0.2.0-dev

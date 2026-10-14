@@ -75,6 +75,10 @@ std::string RepositoryManager::selected_revision() const {
     Statement query(database_.handle(), "SELECT selected_revision FROM repositories WHERE name='nixpkgs';");
     return query.next() ? query.text(0) : "";
 }
+std::string RepositoryManager::selected_nar_hash() const {
+    Statement query(database_.handle(), "SELECT coalesce(r.nar_hash,'') FROM repository_revisions r JOIN repositories repo ON repo.id=r.repository_id WHERE repo.name='nixpkgs' AND r.revision=repo.selected_revision;");
+    return query.next() ? query.text(0) : "";
+}
 
 size_t RepositoryManager::update(bool offline) {
     if (offline) throw std::runtime_error("repository update needs network access and is unavailable with --offline");
@@ -96,8 +100,9 @@ size_t RepositoryManager::update(bool offline) {
         || field(locked, "type") != "github" || field(locked, "owner") != "NixOS" || field(locked, "repo") != "nixpkgs")
         throw std::runtime_error("Nix returned an unexpected repository identity");
     std::string revision = field(locked, "rev");
+    std::string nar_hash = field(locked, "narHash");
     if (!std::regex_match(revision, std::regex("[0-9a-f]{40}")) ||
-        !std::regex_match(field(locked, "narHash"), std::regex("sha256-[A-Za-z0-9+/]{43}=")))
+        !std::regex_match(nar_hash, std::regex("sha256-[A-Za-z0-9+/]{43}=")))
         throw std::runtime_error("Nix returned a repository without a verified immutable revision and content hash");
 
     auto search_args = base;
@@ -129,12 +134,19 @@ size_t RepositoryManager::update(bool offline) {
         Statement repository_id(db, "SELECT id FROM repositories WHERE name='nixpkgs';");
         if (!repository_id.next()) throw std::runtime_error("repository record missing");
         int64_t rid = repository_id.integer(0);
-        Statement revision_insert(db, "INSERT OR IGNORE INTO repository_revisions(repository_id,revision) VALUES(?,?);");
-        revision_insert.bind(1, rid); revision_insert.bind(2, revision); revision_insert.execute();
-        Statement revision_id(db, "SELECT id FROM repository_revisions WHERE repository_id=? AND revision=?;");
+        Statement revision_insert(db, "INSERT OR IGNORE INTO repository_revisions(repository_id,revision,nar_hash) VALUES(?,?,?);");
+        revision_insert.bind(1, rid); revision_insert.bind(2, revision); revision_insert.bind(3, nar_hash); revision_insert.execute();
+        Statement revision_id(db, "SELECT id,coalesce(nar_hash,'') FROM repository_revisions WHERE repository_id=? AND revision=?;");
         revision_id.bind(1, rid); revision_id.bind(2, revision);
         if (!revision_id.next()) throw std::runtime_error("repository revision record missing");
         int64_t revision_key = revision_id.integer(0);
+        std::string stored_hash = revision_id.text(1);
+        if (!stored_hash.empty() && stored_hash != nar_hash)
+            throw std::runtime_error("repository content hash differs from the recorded revision");
+        if (stored_hash.empty()) {
+            Statement fill_hash(db, "UPDATE repository_revisions SET nar_hash=? WHERE id=? AND nar_hash IS NULL;");
+            fill_hash.bind(1, nar_hash); fill_hash.bind(2, revision_key); fill_hash.execute();
+        }
         Statement insert(db, "INSERT INTO packages(repository_revision_id,attribute,name,version,description,license,system) VALUES(?,?,?,?,?,?,?) ON CONFLICT(repository_revision_id,attribute,system) DO UPDATE SET name=excluded.name,version=excluded.version,description=excluded.description,license=excluded.license;");
         for (const auto& record : records) {
             insert.bind(1, revision_key); insert.bind(2, record.attribute); insert.bind(3, record.name);

@@ -16,6 +16,7 @@ grep -F 'unavailable with --offline' "$TEST_DIR/offline.out"
 grep -F 'unavailable with --offline' "$TEST_DIR/offline-update.out"
 "$ASTRA_BIN" --json repo update > "$TEST_DIR/update.json"
 grep -F '"indexed_packages":2' "$TEST_DIR/update.json"
+grep -F '"nar_hash":"sha256-VHg3MYVgQ12LeRSU2PSoDeKlSPD8PYYEFxxwkVVDRd0="' "$TEST_DIR/update.json"
 "$ASTRA_BIN" --json update > "$TEST_DIR/update-alias.json"
 grep -F '"command":"update"' "$TEST_DIR/update-alias.json"
 grep -F '"profiles_changed":false' "$TEST_DIR/update-alias.json"
@@ -26,6 +27,14 @@ grep -F '"name":"hello"' "$TEST_DIR/search.json"
 "$ASTRA_BIN" --json info legacyPackages.x86_64-linux.jq > "$TEST_DIR/info.json"
 grep -F '"availability":"unverified"' "$TEST_DIR/info.json"
 "$ASTRA_BIN" --json repo list | grep -F '0123456789abcdef0123456789abcdef01234567'
+test "$(sqlite3 "$XDG_STATE_HOME/astra/state.db" 'SELECT nar_hash FROM repository_revisions;')" = 'sha256-VHg3MYVgQ12LeRSU2PSoDeKlSPD8PYYEFxxwkVVDRd0='
+sed 's@sha256-VHg3MYVgQ12LeRSU2PSoDeKlSPD8PYYEFxxwkVVDRd0=@sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=@' tests/fixtures/nix-metadata.json > "$TEST_DIR/conflicting-metadata.json"
+ASTRA_MOCK_METADATA_FILE="$TEST_DIR/conflicting-metadata.json" "$ASTRA_BIN" update > "$TEST_DIR/conflict.out" 2>&1 && exit 1
+grep -F 'repository content hash differs from the recorded revision' "$TEST_DIR/conflict.out"
+test "$(sqlite3 "$XDG_STATE_HOME/astra/state.db" 'SELECT nar_hash FROM repository_revisions;')" = 'sha256-VHg3MYVgQ12LeRSU2PSoDeKlSPD8PYYEFxxwkVVDRd0='
+test "$(sqlite3 "$XDG_STATE_HOME/astra/state.db" 'SELECT count(*) FROM packages;')" = 2
+sqlite3 "$XDG_STATE_HOME/astra/state.db" "UPDATE repository_revisions SET nar_hash='sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';" > "$TEST_DIR/immutable.out" 2>&1 && exit 1
+grep -F 'repository content hash is immutable' "$TEST_DIR/immutable.out"
 export ASTRA_MOCK_FAIL_METADATA=1
 "$ASTRA_BIN" repo update > "$TEST_DIR/failure.out" 2>&1 && exit 1
 grep -F 'unexpected repository identity' "$TEST_DIR/failure.out"

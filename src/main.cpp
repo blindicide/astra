@@ -200,16 +200,17 @@ int main(int argc, char** argv) {
         if (args.size() == 2 && args[0] == "repo" && args[1] == "list") {
             if (offline) throw std::invalid_argument("--offline is not meaningful for repo list");
             std::string revision = repo.selected_revision();
+            std::string nar_hash = repo.selected_nar_hash();
             if (json) out << "{\"schema_version\":1,\"command\":\"repo list\",\"repositories\":["
-                                << (revision.empty() ? "" : "{\"name\":\"nixpkgs\",\"revision\":\"" + json_escape(revision) + "\"}") << "]}\n";
-            else out << (revision.empty() ? "No repository revision is indexed\n" : "nixpkgs " + revision + "\n");
+                          << (revision.empty() ? "" : "{\"name\":\"nixpkgs\",\"revision\":\"" + json_escape(revision) + "\",\"nar_hash\":\"" + json_escape(nar_hash) + "\"}") << "]}\n";
+            else out << (revision.empty() ? "No repository revision is indexed\n" : "nixpkgs " + revision + " " + nar_hash + "\n");
             return 0;
         }
         if ((args.size() == 2 && args[0] == "repo" && args[1] == "update") || (args.size() == 1 && args[0] == "update")) {
             size_t count = repo.update(offline);
             const std::string command = args[0] == "update" ? "update" : "repo update";
             if (json) out << "{\"schema_version\":1,\"command\":\"" << command << "\",\"revision\":\""
-                                << json_escape(repo.selected_revision()) << "\",\"indexed_packages\":" << count
+                                << json_escape(repo.selected_revision()) << "\",\"nar_hash\":\"" << json_escape(repo.selected_nar_hash()) << "\",\"indexed_packages\":" << count
                                 << ",\"profiles_changed\":false}\n";
             else out << "Indexed " << count << " packages from nixpkgs " << repo.selected_revision()
                            << "; installed profiles unchanged\n";

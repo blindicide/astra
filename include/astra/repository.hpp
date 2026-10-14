@@ -17,6 +17,7 @@ class RepositoryManager {
 public:
     explicit RepositoryManager(Database& database);
     std::string selected_revision() const;
+    std::string selected_nar_hash() const;
     size_t update(bool offline);
     std::vector<PackageRecord> search(const std::string& query) const;
     PackageRecord info(const std::string& identifier) const;
