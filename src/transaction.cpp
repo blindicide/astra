@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstdlib>
+#include <cstring>
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
@@ -104,12 +106,23 @@ void durable_file(const fs::path& path, const std::string& value) {
     try {
         size_t offset = 0;
         while (offset < value.size()) {
-            ssize_t n = write(fd, value.data() + offset, value.size() - offset);
+            const char* injected = std::getenv("ASTRA_TEST_IO_ERROR");
+            ssize_t n;
+            if (injected && std::strcmp(injected, "journal_write_enospc") == 0) {
+                errno = ENOSPC;
+                n = -1;
+            } else n = write(fd, value.data() + offset, value.size() - offset);
             if (n < 0 && errno == EINTR) continue;
-            if (n <= 0) throw std::runtime_error("cannot write transaction journal");
+            if (n < 0) throw std::runtime_error("cannot write transaction journal: " + std::string(std::strerror(errno)));
+            if (n == 0) throw std::runtime_error("cannot write transaction journal: zero-byte write");
             offset += static_cast<size_t>(n);
         }
-        if (fsync(fd) != 0) throw std::runtime_error("cannot synchronize transaction journal");
+        const char* injected = std::getenv("ASTRA_TEST_IO_ERROR");
+        if (injected && std::strcmp(injected, "journal_fsync_enospc") == 0) {
+            errno = ENOSPC;
+            throw std::runtime_error("cannot synchronize transaction journal: " + std::string(std::strerror(errno)));
+        }
+        if (fsync(fd) != 0) throw std::runtime_error("cannot synchronize transaction journal: " + std::string(std::strerror(errno)));
         if (close(fd) != 0) { fd = -1; throw std::runtime_error("cannot close transaction journal"); }
         fd = -1;
         fault("before_journal_publish");

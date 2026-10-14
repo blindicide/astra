@@ -60,6 +60,30 @@ for point in after_build after_staging after_root before_prepared_db after_prepa
     "$ASTRA_BIN" --dry-run clean | grep -F 'Eligible abandoned ASTRA links: 0' >/dev/null
     "$ASTRA_BIN" history >/dev/null
 done
+for failure in journal_write_enospc journal_fsync_enospc journal_permission; do
+    export XDG_STATE_HOME="$TEST_DIR/$failure"
+    "$ASTRA_BIN" repo update >/dev/null
+    "$ASTRA_BIN" --yes install hello >/dev/null
+    journal_dir="$XDG_STATE_HOME/astra/profiles/default/journals"
+    if [ "$failure" = journal_permission ]; then
+        chmod 500 "$journal_dir"
+        "$ASTRA_BIN" --yes install jq > "$TEST_DIR/$failure.out" 2>&1 && exit 1
+        chmod 700 "$journal_dir"
+        grep -F 'cannot create transaction journal' "$TEST_DIR/$failure.out" >/dev/null
+    else
+        ASTRA_TEST_IO_ERROR="$failure" "$ASTRA_BIN" --yes install jq > "$TEST_DIR/$failure.out" 2>&1 && exit 1
+        grep -F 'No space left on device' "$TEST_DIR/$failure.out" >/dev/null
+    fi
+    test "$(sqlite3 "$XDG_STATE_HOME/astra/state.db" "SELECT count(*) FROM transactions WHERE status='committed';")" -eq 1
+    "$ASTRA_BIN" history >/dev/null
+    test "$(sqlite3 "$XDG_STATE_HOME/astra/state.db" "SELECT count(*) FROM transactions WHERE status='committed';")" -eq 1
+    test "$(sqlite3 "$XDG_STATE_HOME/astra/state.db" "SELECT count(*) FROM transactions WHERE status='not_applied';")" -eq 1
+    "$ASTRA_BIN" list | grep -F hello >/dev/null
+    if "$ASTRA_BIN" list | grep -F jq >/dev/null; then exit 1; fi
+    actual=$(readlink "$XDG_STATE_HOME/astra/profiles/default/profile")
+    recorded=$(sqlite3 "$XDG_STATE_HOME/astra/state.db" "SELECT store_path FROM generations WHERE active=1 AND profile_id=(SELECT id FROM profiles WHERE name='default');")
+    test "$actual" = "$recorded"
+done
 for failure in BUILD STAGE ROOT ACTIVATION; do
     export XDG_STATE_HOME="$TEST_DIR/fail_$failure"
     "$ASTRA_BIN" repo update >/dev/null
