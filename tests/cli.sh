@@ -4,7 +4,7 @@ ASTRA_BIN=$1
 TEST_DIR=$(mktemp -d)
 trap 'rm -rf "$TEST_DIR"' EXIT HUP INT TERM
 export XDG_STATE_HOME="$TEST_DIR/state"
-"$ASTRA_BIN" --version | grep -Fx 'astra 0.1.0'
+"$ASTRA_BIN" --version | grep -Fx 'astra 0.2.0-dev'
 "$ASTRA_BIN" help | grep -F 'Usage: astra'
 set +e
 "$ASTRA_BIN" --json doctor > "$TEST_DIR/doctor.json"
